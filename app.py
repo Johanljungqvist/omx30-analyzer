@@ -294,11 +294,70 @@ def fetch_realtime_price(ticker: str) -> float | None:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_info(ticker: str) -> dict:
+    """
+    Hämtar info-dict och berikar den med fast_info + beräknade fält
+    så att kritiska nyckeltal alltid finns även vid rate-limiting.
+    """
+    t = _ticker(ticker)
+
+    # 1. Primär info-dict (kan vara tom vid rate-limit)
     try:
-        result = _retry(lambda: _ticker(ticker).info)
-        return result or {}
+        info = _retry(lambda: t.info) or {}
     except Exception:
-        return {}
+        info = {}
+
+    # 2. fast_info — mer tillförlitlig, fyll luckor
+    try:
+        fi = t.fast_info
+        _fill = {
+            "marketCap":          getattr(fi, "market_cap",               None),
+            "sharesOutstanding":  getattr(fi, "shares",                   None),
+            "currentPrice":       getattr(fi, "last_price",               None),
+            "regularMarketPrice": getattr(fi, "last_price",               None),
+            "fiftyTwoWeekHigh":   getattr(fi, "fifty_two_week_high",      None),
+            "fiftyTwoWeekLow":    getattr(fi, "fifty_two_week_low",       None),
+            "forwardPE":          getattr(fi, "forward_pe",               None),
+            "currency":           getattr(fi, "currency",                 None),
+            "exchange":           getattr(fi, "exchange",                 None),
+        }
+        for k, v in _fill.items():
+            if v is not None and not info.get(k):
+                info[k] = v
+    except Exception:
+        pass
+
+    # 3. Beräkna börsvärde om det fortfarande saknas
+    _cp     = float(info.get("currentPrice") or 0)
+    _shares = float(info.get("sharesOutstanding") or 0)
+    if not info.get("marketCap") and _cp > 0 and _shares > 0:
+        info["marketCap"] = _cp * _shares
+
+    # 4. Dividend: hämta faktisk utdelningshistorik om dividendRate saknas
+    if not info.get("dividendRate"):
+        try:
+            divs = _retry(lambda: t.dividends)
+            if divs is not None and not divs.empty:
+                # Summera utdelningar senaste 12 månader
+                cutoff = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=13)
+                divs.index = pd.to_datetime(divs.index, utc=True)
+                ttm_div = float(divs[divs.index >= cutoff].sum())
+                if ttm_div > 0:
+                    info["dividendRate"] = ttm_div
+                    if _cp > 0:
+                        info["dividendYield"] = ttm_div / _cp
+        except Exception:
+            pass
+
+    # 5. 52-veckors förändring om den saknas
+    if not info.get("52WeekChange"):
+        try:
+            _h52 = _retry(lambda: t.history(period="1y"))["Close"]
+            if _h52 is not None and len(_h52) >= 2:
+                info["52WeekChange"] = float(_h52.iloc[-1] / _h52.iloc[0] - 1)
+        except Exception:
+            pass
+
+    return info
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -613,6 +672,7 @@ def dcf_valuation(
     wacc: float | None = None,
     terminal_growth: float = 0.025,
     years: int = 5,
+    current_price: float | None = None,
 ) -> dict:
     # Hämta fritt kassaflöde
     fcf = info.get("freeCashflow")
@@ -669,8 +729,8 @@ def dcf_valuation(
     shares  = float(info.get("sharesOutstanding")  or 1)
     eq_val  = ev - td + cash
     iv      = eq_val / shares if shares > 0 else 0
-    cp      = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
-    mos     = (iv - cp) / iv * 100 if iv > 0 else 0
+    cp      = float(current_price or info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+    mos     = (iv - cp) / cp * 100 if cp > 0 else 0
 
     return {
         "fcf_base": fcf, "projected_fcf": proj_fcf,
@@ -863,14 +923,16 @@ def chart_hist_financials(fin: pd.DataFrame, rows: list[str], title: str) -> go.
 # ─────────────────────────────────────────────────────────────────────────────
 # FORMAT HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
-def fmt_big(v, suffix="SEK"):
+def fmt_big(v, suffix=""):
     if v is None or (isinstance(v, float) and np.isnan(v)):
         return "N/A"
     av = abs(v)
-    if av >= 1e12: return f"{v/1e12:.2f}T {suffix}"
-    if av >= 1e9:  return f"{v/1e9:.2f}Mdr {suffix}"
-    if av >= 1e6:  return f"{v/1e6:.1f}M {suffix}"
-    return f"{v:.2f} {suffix}"
+    sfx = f" {suffix}" if suffix else ""
+    if av >= 1e12: return f"{v/1e12:.2f}T{sfx}"
+    if av >= 1e9:  return f"{v/1e9:.1f}Mdr{sfx}"
+    if av >= 1e6:  return f"{v/1e6:.0f}M{sfx}"
+    if av >= 1e3:  return f"{v/1e3:.1f}K{sfx}"
+    return f"{v:.1f}{sfx}"
 
 
 def fmt_pct(v):
@@ -1044,12 +1106,30 @@ def main():
 
     # ── QUICK METRICS ─────────────────────────────────────────────────────────
     m1, m2, m3, m4, m5, m6 = st.columns(6)
+    # Snabba fallback-beräkningar för top-metrics
+    _shares_top  = float(info.get("sharesOutstanding") or
+                         _val(fin["q_balance"], 0, "Ordinary Shares Number","Share Issued") or 0)
+    _mktcap_top  = info.get("marketCap") or (cp * _shares_top if _shares_top > 0 else None)
+    _pe_top      = info.get("trailingPE")
+    if not _pe_top and _mktcap_top:
+        try:
+            _qi = fin["q_income"]
+            _ttm_ni = sum(v for i in range(4)
+                          for k in ["Net Income","Net Income Common Stockholders"]
+                          if not _qi.empty and k in _qi.index
+                          for v in [float(_qi.loc[k].iloc[i])]
+                          if pd.notna(v)) if not _qi.empty else 0
+            if _ttm_ni > 0:
+                _pe_top = _mktcap_top / _ttm_ni
+        except Exception:
+            pass
+
     m1.metric("Kurs (SEK)",     f"{cp:.2f}",         f"{chg:+.2f} ({pchg:+.2f}%)")
     m2.metric("52v Högst",      f"{df['High'].max():.2f}")
     m3.metric("52v Lägst",      f"{df['Low'].min():.2f}")
-    m4.metric("Snittvolym",     fmt_big(df["Volume"].mean(), ""))
-    m5.metric("Börsvärde",      fmt_big(info.get("marketCap")))
-    m6.metric("P/E (trailing)", fmt_num(info.get("trailingPE")))
+    m4.metric("Snittvolym",     fmt_big(df["Volume"].mean()))
+    m5.metric("Börsvärde",      fmt_big(_mktcap_top))
+    m6.metric("P/E (trailing)", fmt_num(_pe_top))
     st.divider()
 
     # ── TABS ──────────────────────────────────────────────────────────────────
@@ -1215,7 +1295,25 @@ def main():
         cur_liab  = _val(qb, 0, "Current Liabilities","Total Current Liabilities")
         inv_q     = _val(qb, 0, "Inventory")
         capex_q   = _val(qcf, 0, "Capital Expenditure")
-        mktcap    = info.get("marketCap")
+
+        # ── Aktier: info → fast_info → balansräkning ─────────────────────────
+        shares_bs = _val(qb, 0, "Ordinary Shares Number","Share Issued")
+        shares    = float(info.get("sharesOutstanding") or shares_bs or 1)
+
+        # ── Börsvärde: info → cp × aktier ────────────────────────────────────
+        mktcap = float(info.get("marketCap") or 0) or (cp * shares if shares > 1 else None)
+
+        # ── EV: info → mktcap + nettoskuld ───────────────────────────────────
+        ev = float(info.get("enterpriseValue") or 0) or None
+        if not ev and mktcap:
+            _nd = net_debt if net_debt is not None else (
+                (tot_debt or 0) - (cash_q or 0) if tot_debt else 0)
+            ev = mktcap + _nd
+
+        # ── P/B beräknad: kurs / (eget kapital per aktie) ────────────────────
+        bvps_calc = tot_eq / shares if tot_eq and shares > 1 else None
+        pb_stmt   = cp / bvps_calc  if bvps_calc and bvps_calc > 0 else None
+        pb_corr   = pb_corr or pb_stmt   # info-korrektionen tar prio, annars rapport
 
         # Beräknade nyckeltal
         roe_calc   = ttm_ni / tot_eq         if ttm_ni and tot_eq and tot_eq > 0 else None
@@ -1231,13 +1329,31 @@ def main():
         ebitda_mg  = ttm_ebitda / ttm_rev    if ttm_ebitda and ttm_rev else None
         quick_r    = (cur_assets - (inv_q or 0)) / cur_liab if cur_assets and cur_liab else None
         int_cov    = ttm_oi / abs(ttm_int)   if ttm_oi and ttm_int and ttm_int != 0 else None
-        ps_calc    = mktcap / ttm_rev        if mktcap and ttm_rev else None
+        # ── Beräkna allt från kvartalsdata — info används bara om det är bättre ─
+        eps_ttm    = ttm_ni / shares         if ttm_ni and shares > 1 else None
         pe_calc    = mktcap / ttm_ni         if mktcap and ttm_ni and ttm_ni > 0 else None
-        ev         = info.get("enterpriseValue")
+        ps_calc    = mktcap / ttm_rev        if mktcap and ttm_rev else None
         ev_ebitda_c= ev / ttm_ebitda         if ev and ttm_ebitda and ttm_ebitda > 0 else None
         ev_rev_c   = ev / ttm_rev            if ev and ttm_rev else None
-        eps_ttm    = ttm_ni / shares         if ttm_ni and shares else None
-        rev_yoy    = None
+
+        # P/E: rapport-beräknad är alltid korrekt, info kan vara försenad
+        pe_v   = pe_calc or info.get("trailingPE")
+        # Forward P/E: info eller fast_info
+        fpe    = info.get("forwardPE")
+        if fpe and (fpe <= 0 or fpe > 300): fpe = None
+        # P/S: rapport-beräknad
+        ps_v   = ps_calc or info.get("priceToSalesTrailingTwelveMonths")
+        # EV-multiplar: rapport-beräknade
+        evebit = ev_ebitda_c or info.get("enterpriseToEbitda")
+        evrev  = ev_rev_c    or info.get("enterpriseToRevenue")
+        ev_ebit_r = ev / ttm_ebit if ev and ttm_ebit and ttm_ebit > 0 else None
+        # PEG: pe / tillväxt
+        peg_v  = info.get("pegRatio")
+        if not peg_v and pe_v and rev_yoy and rev_yoy > 0:
+            peg_v = pe_v / (rev_yoy * 100)
+
+        # YoY-tillväxt
+        rev_yoy = None
         if not qi.empty and len(qi.columns) >= 5:
             r_now  = _val(qi, 0, "Total Revenue","Operating Revenue")
             r_year = _val(qi, 4, "Total Revenue","Operating Revenue")
@@ -1250,28 +1366,25 @@ def main():
             if n_now and n_year and n_year != 0:
                 ni_yoy = (n_now - n_year) / abs(n_year)
 
-        fpe = info.get("forwardPE")
+        # Direktavkastning: dividendRate från info (berikat med historik i fetch_info)
+        dy   = get_dividend_yield(info)
+        # ROE/ROA: rapport-beräknad tar prio
+        roe_v = f"{roe_calc*100:.1f}%" if roe_calc else fmt_pct(info.get("returnOnEquity"))
+        roa_v = f"{roa_calc*100:.1f}%" if roa_calc else fmt_pct(info.get("returnOnAssets"))
 
         # ── SEKTION 2: Värdering, hälsa, lönsamhet, utdelning/analytiker ────
         c1, c2, c3, c4 = st.columns(4)
 
         with c1:
             st.subheader("📊 Värdering")
-            pe_v    = info.get("trailingPE")
-            if (pe_v is None or pe_v <= 0) and pe_calc and pe_calc > 0:
-                pe_v = pe_calc
-            ps_v    = info.get("priceToSalesTrailingTwelveMonths") or ps_calc
-            evebit  = info.get("enterpriseToEbitda") or ev_ebitda_c
-            evrev   = info.get("enterpriseToRevenue") or ev_rev_c
-            ev_ebit = ev / ttm_ebit if ev and ttm_ebit and ttm_ebit > 0 else None
             items = {
                 "P/E (TTM)":        fmt_num(pe_v),
-                "P/E (forward)":    fmt_num(fpe) if fpe and 0 < fpe < 200 else "N/A",
-                "PEG":              fmt_num(info.get("pegRatio")),
+                "P/E (forward)":    fmt_num(fpe) if fpe else "N/A",
+                "PEG":              fmt_num(peg_v),
                 "P/B":              fmt_num(pb_corr),
                 "P/S (TTM)":        fmt_num(ps_v),
                 "EV/EBITDA":        fmt_num(evebit),
-                "EV/EBIT":          fmt_num(ev_ebit),
+                "EV/EBIT":          fmt_num(ev_ebit_r),
                 "EV/Revenue":       fmt_num(evrev),
                 "FCF-yield":        fmt_pct(fcf_yield),
                 "Börsvärde":        fmt_big(mktcap),
@@ -1301,27 +1414,24 @@ def main():
         with c3:
             st.subheader("📈 Lönsamhet & Resultat (TTM)")
             items = {
-                "Intäkter (TTM)":      fmt_big(ttm_rev or info.get("totalRevenue")),
-                "Bruttoresultat (TTM)":fmt_big(ttm_gp),
-                "EBIT (TTM)":          fmt_big(ttm_ebit),
-                "EBITDA (TTM)":        fmt_big(ttm_ebitda),
-                "Nettoresultat (TTM)": fmt_big(ttm_ni),
-                "FCF (TTM)":           fmt_big(ttm_fcf),
-                "─── Marginaler ───":  "─────────",
-                "Bruttomarginal":      f"{gp_margin*100:.1f}%"    if gp_margin   else "N/A",
-                "EBIT-marginal":       f"{(ttm_ebit/ttm_rev*100):.1f}%" if ttm_ebit and ttm_rev else fmt_pct(info.get("operatingMargins")),
-                "EBITDA-marginal":     f"{ebitda_mg*100:.1f}%"    if ebitda_mg   else "N/A",
-                "Nettomarginal":       f"{ni_margin*100:.1f}%"    if ni_margin   else fmt_pct(info.get("profitMargins")),
-                "FCF-marginal":        f"{fcf_margin*100:.1f}%"   if fcf_margin  else "N/A",
-                "─── Avkastning ───":  "─────────",
-                "ROE":                 f"{roe_calc*100:.1f}%"     if roe_calc    else fmt_pct(info.get("returnOnEquity")),
-                "ROA":                 f"{roa_calc*100:.1f}%"     if roa_calc    else fmt_pct(info.get("returnOnAssets")),
-                "ROIC":                f"{roic_calc*100:.1f}%"    if roic_calc   else "N/A",
-                "─── Tillväxt ───":    "─────────",
-                "Intäktstillväxt":     fmt_pct(info.get("revenueGrowth") or rev_yoy),
-                "Vinsttillväxt":       fmt_pct(info.get("earningsGrowth") or ni_yoy),
-                "EPS (TTM)":           fmt_num(info.get("trailingEps") or eps_ttm),
-                "R&D":                 fmt_big(_val(qi, 0, "Research And Development")),
+                "Intäkter (TTM)":       fmt_big(ttm_rev),
+                "Bruttoresultat (TTM)": fmt_big(ttm_gp),
+                "EBIT (TTM)":           fmt_big(ttm_ebit),
+                "EBITDA (TTM)":         fmt_big(ttm_ebitda),
+                "Nettoresultat (TTM)":  fmt_big(ttm_ni),
+                "FCF (TTM)":            fmt_big(ttm_fcf),
+                "Bruttomarginal":       f"{gp_margin*100:.1f}%"  if gp_margin  else "N/A",
+                "EBIT-marginal":        f"{ttm_ebit/ttm_rev*100:.1f}%" if ttm_ebit and ttm_rev else "N/A",
+                "EBITDA-marginal":      f"{ebitda_mg*100:.1f}%"  if ebitda_mg  else "N/A",
+                "Nettomarginal":        f"{ni_margin*100:.1f}%"  if ni_margin  else "N/A",
+                "FCF-marginal":         f"{fcf_margin*100:.1f}%" if fcf_margin else "N/A",
+                "ROE":                  roe_v,
+                "ROA":                  roa_v,
+                "ROIC":                 f"{roic_calc*100:.1f}%"  if roic_calc  else "N/A",
+                "Intäktstillväxt (YoY)":fmt_pct(rev_yoy or info.get("revenueGrowth")),
+                "Vinsttillväxt (YoY)":  fmt_pct(ni_yoy  or info.get("earningsGrowth")),
+                "EPS (TTM)":            fmt_num(eps_ttm or info.get("trailingEps")),
+                "R&D":                  fmt_big(_val(qi, 0, "Research And Development")),
             }
             for k, v in items.items(): st.metric(k, v)
 
@@ -1499,7 +1609,8 @@ def main():
             )
             if need_recalc:
                 result = dcf_valuation(info, fin["cashflow"],
-                                       dcf_growth, dcf_wacc, dcf_terminal, dcf_years)
+                                       dcf_growth, dcf_wacc, dcf_terminal, dcf_years,
+                                       current_price=cp)
                 st.session_state.dcf_cache[ticker] = (result, dcf_params_now, now_ts)
             else:
                 result = cached[0]
@@ -1551,7 +1662,7 @@ def main():
                 for w in wacc_range:
                     row = {}
                     for g2 in growth_range:
-                        r = dcf_valuation(info, fin["cashflow"], g2, w, dcf_terminal, dcf_years)
+                        r = dcf_valuation(info, fin["cashflow"], g2, w, dcf_terminal, dcf_years, current_price=cp)
                         row[f"g={g2*100:.0f}%"] = round(r.get("margin_of_safety", 0), 1) if "error" not in r else 0
                     sens_data[f"WACC={w*100:.0f}%"] = row
                 sens_df = pd.DataFrame(sens_data).T
@@ -1839,7 +1950,7 @@ def main():
                     a_tax = st.number_input("Skattesats (%)", 0.0, 50.0, 20.6, 0.5) / 100
 
                 if st.button("▶ Kör avancerad DCF", type="primary"):
-                    adv = dcf_valuation(info, fin["cashflow"], ag, aw, at, ay)
+                    adv = dcf_valuation(info, fin["cashflow"], ag, aw, at, ay, current_price=cp)
                     if "error" in adv:
                         st.error(adv["error"])
                     else:
