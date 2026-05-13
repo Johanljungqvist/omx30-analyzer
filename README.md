@@ -1,3 +1,12 @@
+---
+title: OMX30 Analyzer Pro
+emoji: 📈
+colorFrom: blue
+colorTo: green
+sdk: docker
+pinned: false
+---
+
 # 📈 OMX30 Analyzer Pro
 
 Komplett aktieanalysverktyg för alla 30 aktier i OMX Stockholm 30-indexet.
