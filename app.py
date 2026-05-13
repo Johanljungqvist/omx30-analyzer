@@ -726,64 +726,107 @@ def dcf_valuation(
     terminal_growth: float = 0.025,
     years: int = 5,
     current_price: float | None = None,
+    q_cashflow_df: pd.DataFrame | None = None,
 ) -> dict:
-    # Hämta fritt kassaflöde
-    fcf = info.get("freeCashflow")
-    if not fcf or fcf <= 0:
+    """
+    DCF i SEK för alla OMX30-bolag inkl. EUR/USD-rapportörer.
+    Alla kassaflödesvärden omräknas till SEK via live-valutakurs.
+    """
+    fin_cur = info.get("financialCurrency", "SEK")
+    fx      = fetch_fx_rate(f"{fin_cur}SEK=X") if fin_cur != "SEK" else 1.0
+
+    cp = float(current_price or info.get("currentPrice") or
+               info.get("regularMarketPrice") or 0)
+    if cp <= 0:
+        return {"error": "Kan inte hämta aktuell kurs"}
+
+    shares = float(info.get("sharesOutstanding") or 1)
+
+    # ── FCF: TTM från kvartalssiffror (mest aktuellt) → årsrapport → info ───
+    fcf = None
+    if q_cashflow_df is not None and not q_cashflow_df.empty:
         try:
-            if not cashflow_df.empty:
-                ocf  = cashflow_df.loc["Operating Cash Flow"].iloc[0]  if "Operating Cash Flow"  in cashflow_df.index else None
-                capx = cashflow_df.loc["Capital Expenditure"].iloc[0]  if "Capital Expenditure"  in cashflow_df.index else None
-                if ocf and capx:
-                    fcf = float(ocf) + float(capx)
+            ttm_ocf, ttm_cx = 0.0, 0.0
+            for i in range(min(4, len(q_cashflow_df.columns))):
+                if "Operating Cash Flow" in q_cashflow_df.index:
+                    v = q_cashflow_df.loc["Operating Cash Flow"].iloc[i]
+                    if pd.notna(v): ttm_ocf += float(v)
+                if "Capital Expenditure" in q_cashflow_df.index:
+                    v = q_cashflow_df.loc["Capital Expenditure"].iloc[i]
+                    if pd.notna(v): ttm_cx += float(v)
+            if ttm_ocf > 0:
+                fcf_q = ttm_ocf + ttm_cx  # capex är negativt i yfinance
+                if fcf_q > 0:
+                    fcf = fcf_q * fx       # konvertera till SEK
         except Exception:
             pass
 
-    if not fcf or fcf <= 0:
-        return {"error": "Otillräcklig kassaflödesdata — DCF ej tillgänglig"}
+    if not fcf and not cashflow_df.empty:
+        try:
+            ocf  = cashflow_df.loc["Operating Cash Flow"].iloc[0] if "Operating Cash Flow" in cashflow_df.index else None
+            capx = cashflow_df.loc["Capital Expenditure"].iloc[0]  if "Capital Expenditure"  in cashflow_df.index else None
+            if ocf and capx:
+                val = float(ocf) + float(capx)
+                if val > 0:
+                    fcf = val * fx
+        except Exception:
+            pass
 
-    # Tillväxttakt
+    if not fcf:
+        raw = info.get("freeCashflow")
+        if raw and float(raw) > 0:
+            fcf = float(raw) * fx
+
+    if not fcf or fcf <= 0:
+        return {"error": "Otillräcklig kassaflödesdata — DCF ej tillgänglig för detta bolag"}
+
+    # ── Tillväxttakt ─────────────────────────────────────────────────────────
     if growth_rate is None:
-        rg = info.get("revenueGrowth") or 0.05
-        eg = info.get("earningsGrowth") or 0.05
+        rg = float(info.get("revenueGrowth")  or 0.05)
+        eg = float(info.get("earningsGrowth") or 0.05)
         growth_rate = float(np.clip((rg + eg) / 2, 0.01, 0.30))
 
-    # WACC — beta beräknas mot OMXS30 (inte S&P 500)
+    # ── WACC via CAPM + kapitalstruktur ──────────────────────────────────────
     if wacc is None:
-        ticker_sym = info.get("symbol", "")
-        beta      = calc_beta_omx(ticker_sym) if ticker_sym else float(info.get("beta") or 1.0)
-        rf        = 0.038
-        erp       = 0.055
-        ke        = rf + beta * erp
-        td        = float(info.get("totalDebt")  or 0)
-        mc        = float(info.get("marketCap")  or 1)
-        total_cap = td + mc
-        wd        = td / total_cap if total_cap > 0 else 0.2
-        we        = 1 - wd
-        kd        = 0.04
-        tax       = 0.206
-        wacc      = float(np.clip(we * ke + wd * kd * (1 - tax), 0.06, 0.25))
+        sym    = info.get("symbol", "")
+        beta   = calc_beta_omx(sym) if sym else float(info.get("beta") or 1.0)
+        rf     = 0.038           # Svensk 10-årig statsobligation
+        erp    = 0.055           # Equity Risk Premium
+        ke     = rf + beta * erp
+        td_sek = float(info.get("totalDebt")  or 0) * fx
+        mc_sek = float(info.get("marketCap")  or 0) or (cp * shares)
+        tot    = td_sek + mc_sek
+        wd     = td_sek / tot if tot > 0 else 0.20
+        we     = 1 - wd
+        kd     = 0.045
+        tax    = 0.206
+        wacc   = float(np.clip(we * ke + wd * kd * (1 - tax), 0.06, 0.25))
 
-    # Projicera FCF med avtagande tillväxt
-    g, decay = growth_rate, 0.85
+    # ── FCF-projektion: kumulativt korrekt med avtagande tillväxt ────────────
+    decay    = 0.85
+    g        = growth_rate
     proj_fcf = []
-    for i in range(1, years + 1):
-        proj_fcf.append(fcf * (1 + g) ** i)
-        g *= decay
+    fcf_t    = fcf
+    for _ in range(years):
+        fcf_t = fcf_t * (1 + g)
+        proj_fcf.append(fcf_t)
+        g = max(g * decay, terminal_growth)   # g avtar men ej under terminal
 
-    # Terminal Value (Gordon Growth)
+    # ── Present Value ─────────────────────────────────────────────────────────
+    if wacc <= terminal_growth:
+        terminal_growth = wacc - 0.01
+
     tv  = proj_fcf[-1] * (1 + terminal_growth) / (wacc - terminal_growth)
     pv  = sum(cf / (1 + wacc) ** (i + 1) for i, cf in enumerate(proj_fcf))
     pvt = tv / (1 + wacc) ** years
     ev  = pv + pvt
 
-    td      = float(info.get("totalDebt")         or 0)
-    cash    = float(info.get("totalCash")          or 0)
-    shares  = float(info.get("sharesOutstanding")  or 1)
-    eq_val  = ev - td + cash
-    iv      = eq_val / shares if shares > 0 else 0
-    cp      = float(current_price or info.get("currentPrice") or info.get("regularMarketPrice") or 0)
-    mos     = (iv - cp) / cp * 100 if cp > 0 else 0
+    # ── Equity Value per aktie (SEK) ──────────────────────────────────────────
+    td_sek   = float(info.get("totalDebt") or 0) * fx
+    cash_sek = float(info.get("totalCash") or 0) * fx
+    eq_val   = ev - td_sek + cash_sek
+    iv       = eq_val / shares if shares > 1 else 0
+    mos      = (iv - cp) / cp * 100 if cp > 0 else 0
 
     return {
         "fcf_base": fcf, "projected_fcf": proj_fcf,
@@ -792,6 +835,7 @@ def dcf_valuation(
         "current_price": cp, "margin_of_safety": mos,
         "wacc": wacc, "growth_rate": growth_rate,
         "terminal_growth": terminal_growth,
+        "currency_note": f"({fin_cur}→SEK ×{fx:.2f})" if fin_cur != "SEK" else "",
     }
 
 
@@ -804,31 +848,46 @@ def monte_carlo(
     n_days: int = 252,
     ci: float = 0.95,
 ) -> dict:
-    ret         = df["Close"].pct_change().dropna()
-    mu, sigma   = float(ret.mean()), float(ret.std())
-    last        = float(df["Close"].iloc[-1])
+    if df.empty or len(df) < 30:
+        raise ValueError("Otillräcklig kurshistorik för Monte Carlo (minst 30 handelsdagar krävs)")
 
-    rng  = np.random.default_rng(seed=42)
-    sim  = np.zeros((n_days, n_sim))
-    for i in range(n_sim):
-        dr         = rng.normal(mu, sigma, n_days)
-        sim[:, i]  = last * np.exp(np.cumsum(np.log1p(dr)))
+    close = df["Close"].dropna()
+    ret   = np.log(close / close.shift(1)).dropna()
 
-    finals = sim[-1]
+    if len(ret) < 20:
+        raise ValueError("För få avkastningsdatapunkter")
+
+    mu    = float(ret.mean())
+    sigma = float(ret.std())
+    last  = float(close.iloc[-1])
+
+    # Geometric Brownian Motion med drift-korrigering
+    dt   = 1.0
+    drift = (mu - 0.5 * sigma ** 2) * dt
+
+    rng = np.random.default_rng(seed=42)
+    # Vektoriserad beräkning: (n_days, n_sim)
+    shocks = rng.normal(0, sigma * np.sqrt(dt), size=(n_days, n_sim))
+    log_returns = drift + shocks
+    price_paths = last * np.exp(np.cumsum(log_returns, axis=0))
+
+    finals = price_paths[-1]
+    var_pct = (1 - ci) * 100
+
     return {
-        "sim":          sim,
-        "finals":       finals,
-        "last":         last,
-        "mu":           mu,
-        "sigma":        sigma,
-        "expected":     float(np.mean(finals)),
-        "var":          float(np.percentile(finals, (1 - ci) * 100)),
-        "prob_profit":  float(np.mean(finals > last) * 100),
-        "p5":           float(np.percentile(finals, 5)),
-        "p25":          float(np.percentile(finals, 25)),
-        "p50":          float(np.percentile(finals, 50)),
-        "p75":          float(np.percentile(finals, 75)),
-        "p95":          float(np.percentile(finals, 95)),
+        "sim":         price_paths,
+        "finals":      finals,
+        "last":        last,
+        "mu":          mu,
+        "sigma":       sigma,
+        "expected":    float(np.mean(finals)),
+        "var":         float(np.percentile(finals, var_pct)),
+        "prob_profit": float(np.mean(finals > last) * 100),
+        "p5":          float(np.percentile(finals, 5)),
+        "p25":         float(np.percentile(finals, 25)),
+        "p50":         float(np.percentile(finals, 50)),
+        "p75":         float(np.percentile(finals, 75)),
+        "p95":         float(np.percentile(finals, 95)),
     }
 
 
@@ -1696,7 +1755,7 @@ def main():
             if need_recalc:
                 result = dcf_valuation(info, fin["cashflow"],
                                        dcf_growth, dcf_wacc, dcf_terminal, dcf_years,
-                                       current_price=cp)
+                                       current_price=cp, q_cashflow_df=fin["q_cashflow"])
                 st.session_state.dcf_cache[ticker] = (result, dcf_params_now, now_ts)
             else:
                 result = cached[0]
@@ -1748,7 +1807,7 @@ def main():
                 for w in wacc_range:
                     row = {}
                     for g2 in growth_range:
-                        r = dcf_valuation(info, fin["cashflow"], g2, w, dcf_terminal, dcf_years, current_price=cp)
+                        r = dcf_valuation(info, fin["cashflow"], g2, w, dcf_terminal, dcf_years, current_price=cp, q_cashflow_df=fin["q_cashflow"])
                         row[f"g={g2*100:.0f}%"] = round(r.get("margin_of_safety", 0), 1) if "error" not in r else 0
                     sens_data[f"WACC={w*100:.0f}%"] = row
                 sens_df = pd.DataFrame(sens_data).T
@@ -2036,7 +2095,7 @@ def main():
                     a_tax = st.number_input("Skattesats (%)", 0.0, 50.0, 20.6, 0.5) / 100
 
                 if st.button("▶ Kör avancerad DCF", type="primary"):
-                    adv = dcf_valuation(info, fin["cashflow"], ag, aw, at, ay, current_price=cp)
+                    adv = dcf_valuation(info, fin["cashflow"], ag, aw, at, ay, current_price=cp, q_cashflow_df=fin["q_cashflow"])
                     if "error" in adv:
                         st.error(adv["error"])
                     else:
