@@ -59,46 +59,179 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-    /* Global dark theme */
-    .stApp { background-color: #0a0a14; }
-    section[data-testid="stSidebar"] {
-        background: linear-gradient(180deg, #0d0d1e 0%, #111128 100%);
-        border-right: 1px solid #1e1e3a;
-    }
-    /* Metric cards */
-    div[data-testid="metric-container"] {
-        background: linear-gradient(135deg, #12122a 0%, #1a1a35 100%);
-        border: 1px solid #252550;
-        border-radius: 10px;
-        padding: 12px 16px;
-    }
-    /* Positive/Negative colors */
-    .pos  { color: #00e676; font-weight: 700; }
-    .neg  { color: #ff1744; font-weight: 700; }
-    .neu  { color: #90a4ae; }
-    /* Signal badges */
-    .badge-buy  { background:#00e676; color:#000; padding:3px 10px;
-                  border-radius:5px; font-weight:700; font-size:13px; }
-    .badge-sell { background:#ff1744; color:#fff; padding:3px 10px;
-                  border-radius:5px; font-weight:700; font-size:13px; }
-    .badge-neu  { background:#f59e0b; color:#000; padding:3px 10px;
-                  border-radius:5px; font-weight:700; font-size:13px; }
-    /* Admin banner */
-    .admin-banner {
-        background: linear-gradient(90deg, #1a0000, #330000);
-        border: 1px solid #ff1744;
-        border-radius: 8px;
-        padding: 10px 16px;
-        color: #ff6666;
-        font-size: 13px;
-        margin-bottom: 10px;
-    }
-    /* Section headers */
-    h2, h3 { color: #7c9eff !important; }
-    /* Tabs */
-    button[data-baseweb="tab"] { font-size: 14px; }
-    /* Divider */
-    hr { border-color: #1e1e3a; }
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+/* ── Base ── */
+html, body, .stApp, [class*="css"] {
+    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+}
+.stApp {
+    background-color: #09090F;
+    color: #D0D0E0;
+}
+
+/* ── Sidebar ── */
+section[data-testid="stSidebar"] {
+    background-color: #0C0C14;
+    border-right: 1px solid rgba(255,255,255,0.06);
+}
+section[data-testid="stSidebar"] * { font-size: 13px; }
+section[data-testid="stSidebar"] h1,
+section[data-testid="stSidebar"] h2,
+section[data-testid="stSidebar"] h3 {
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.12em !important;
+    text-transform: uppercase !important;
+    color: #666680 !important;
+    margin-top: 1.4rem !important;
+}
+
+/* ── Metric cards ── */
+div[data-testid="metric-container"] {
+    background: #0F0F18;
+    border: 1px solid rgba(255,255,255,0.07);
+    border-radius: 8px;
+    padding: 14px 16px;
+    transition: border-color 0.2s;
+}
+div[data-testid="metric-container"]:hover {
+    border-color: rgba(255,255,255,0.16);
+}
+div[data-testid="metric-container"] label {
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    color: #666680 !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricValue"] {
+    font-size: 18px !important;
+    font-weight: 600 !important;
+    color: #EEEEF6 !important;
+    letter-spacing: -0.01em !important;
+}
+div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
+    font-size: 12px !important;
+    font-weight: 500 !important;
+}
+
+/* ── Headings ── */
+h1 { font-size: 22px !important; font-weight: 700 !important;
+     color: #FFFFFF !important; letter-spacing: -0.02em !important; }
+h2 { font-size: 15px !important; font-weight: 600 !important;
+     color: #FFFFFF !important; letter-spacing: -0.01em !important;
+     border-bottom: 1px solid rgba(255,255,255,0.07);
+     padding-bottom: 8px; margin-top: 1.5rem !important; }
+h3 { font-size: 13px !important; font-weight: 600 !important;
+     color: #A0A0C0 !important; letter-spacing: 0.02em !important;
+     text-transform: uppercase !important; }
+
+/* ── Tabs ── */
+div[data-baseweb="tab-list"] {
+    background: #0C0C14 !important;
+    border-radius: 8px;
+    padding: 4px;
+    gap: 2px;
+    border: 1px solid rgba(255,255,255,0.06);
+}
+button[data-baseweb="tab"] {
+    font-size: 13px !important;
+    font-weight: 500 !important;
+    color: #666680 !important;
+    border-radius: 6px !important;
+    padding: 8px 18px !important;
+    letter-spacing: 0.01em !important;
+    transition: all 0.15s !important;
+}
+button[data-baseweb="tab"]:hover { color: #FFFFFF !important; }
+button[data-baseweb="tab"][aria-selected="true"] {
+    background: #1A1A28 !important;
+    color: #FFFFFF !important;
+    font-weight: 600 !important;
+}
+
+/* ── Divider ── */
+hr { border: none; border-top: 1px solid rgba(255,255,255,0.06) !important; margin: 1.5rem 0 !important; }
+
+/* ── Signal badges ── */
+.badge-buy  { background: rgba(34,197,94,0.15); color: #22C55E;
+              border: 1px solid rgba(34,197,94,0.3);
+              padding: 3px 12px; border-radius: 4px;
+              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
+.badge-sell { background: rgba(239,68,68,0.15); color: #EF4444;
+              border: 1px solid rgba(239,68,68,0.3);
+              padding: 3px 12px; border-radius: 4px;
+              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
+.badge-neu  { background: rgba(234,179,8,0.12); color: #EAB308;
+              border: 1px solid rgba(234,179,8,0.25);
+              padding: 3px 12px; border-radius: 4px;
+              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
+
+/* ── Color helpers ── */
+.pos { color: #22C55E; font-weight: 600; }
+.neg { color: #EF4444; font-weight: 600; }
+.neu { color: #94A3B8; }
+
+/* ── Admin banner ── */
+.admin-banner {
+    background: rgba(239,68,68,0.06);
+    border: 1px solid rgba(239,68,68,0.25);
+    border-radius: 6px;
+    padding: 8px 14px;
+    color: #EF4444;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* ── Dataframes ── */
+div[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+div[data-testid="stDataFrame"] th {
+    background: #0F0F18 !important;
+    color: #666680 !important;
+    font-size: 11px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+}
+
+/* ── Buttons ── */
+div[data-testid="stButton"] button {
+    background: #1A1A28;
+    border: 1px solid rgba(255,255,255,0.1);
+    color: #EEEEF6;
+    font-size: 13px;
+    font-weight: 500;
+    border-radius: 6px;
+    transition: all 0.15s;
+}
+div[data-testid="stButton"] button:hover {
+    background: #222235;
+    border-color: rgba(255,255,255,0.2);
+}
+
+/* ── Inputs / Selects ── */
+div[data-testid="stSelectbox"] > div,
+div[data-testid="stMultiSelect"] > div {
+    background: #0F0F18;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+}
+
+/* ── Info / Warning ── */
+div[data-testid="stAlert"] {
+    border-radius: 6px;
+    border-left-width: 3px;
+    font-size: 13px;
+}
+
+/* ── Caption / small text ── */
+.stCaption, small, caption {
+    color: #555570 !important;
+    font-size: 11px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -590,9 +723,13 @@ def monte_carlo(
 # CHART BUILDERS
 # ─────────────────────────────────────────────────────────────────────────────
 _DARK = dict(template="plotly_dark",
-             paper_bgcolor="#0a0a14",
-             plot_bgcolor="#0d0d1e",
-             font=dict(color="#c0c8e8"))
+             paper_bgcolor="#09090F",
+             plot_bgcolor="#0D0D15",
+             font=dict(family="Inter, system-ui, sans-serif", color="#C8C8D8", size=12),
+             title_font=dict(family="Inter, system-ui, sans-serif", color="#FFFFFF", size=14),
+             legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)"),
+             xaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"),
+             yaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"))
 
 
 def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Figure:
