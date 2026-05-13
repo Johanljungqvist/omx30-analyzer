@@ -1,6 +1,6 @@
 """
 OMX30 Analyzer — Teknisk, Fundamental, DCF & Monte Carlo
-Kurs uppdateras automatiskt varje timme via Streamlit cache.
+Kurs uppdateras i realtid var 1:a eller 5:e minut via auto-refresh.
 """
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 from scipy import stats
+from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
 import warnings
 import json
@@ -124,7 +125,7 @@ def fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=300, show_spinner=False)   # 5 min för realtidspris
+@st.cache_data(ttl=60, show_spinner=False)   # 60 s — matchar 1-min refresh
 def fetch_realtime_price(ticker: str) -> float | None:
     try:
         fi = yf.Ticker(ticker).fast_info
@@ -620,11 +621,33 @@ def main():
     if "admin" not in st.session_state:
         st.session_state.admin = False
 
+    # ── AUTO-REFRESH ─────────────────────────────────────────────────────────
+    # Körs innan sidebar så räknaren alltid är aktiv
+    if "refresh_interval" not in st.session_state:
+        st.session_state.refresh_interval = 60
+
+    refresh_count = st_autorefresh(
+        interval=st.session_state.refresh_interval * 1000,
+        key="price_autorefresh",
+    )
+
     # ── SIDEBAR ──────────────────────────────────────────────────────────────
     with st.sidebar:
         st.markdown("## 📈 OMX30 Analyzer Pro")
         st.caption(f"⏱ Senast uppdaterad: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-        st.caption("Kurs uppdateras automatiskt var 60:e minut")
+
+        refresh_opt = st.radio(
+            "Kursuppdatering",
+            options=[60, 300],
+            format_func=lambda x: "⚡ Var 1 minut" if x == 60 else "🕐 Var 5 minuter",
+            horizontal=True,
+            index=0 if st.session_state.refresh_interval == 60 else 1,
+        )
+        if refresh_opt != st.session_state.refresh_interval:
+            st.session_state.refresh_interval = refresh_opt
+            st.rerun()
+
+        st.caption(f"🔄 Uppdatering #{refresh_count} &nbsp;|&nbsp; Intervall: {refresh_opt}s")
         st.divider()
 
         selected = st.selectbox("Välj aktie", list(OMX30.keys()),
@@ -639,9 +662,14 @@ def main():
             default=["SMA 50","SMA 200","Bollinger"])
 
         st.divider()
-        if st.button("🔄 Tvinga uppdatering", use_container_width=True):
-            st.cache_data.clear()
-            st.rerun()
+        col_btn1, col_btn2 = st.columns(2)
+        with col_btn1:
+            if st.button("🔄 Rensa cache", use_container_width=True):
+                st.cache_data.clear()
+                st.rerun()
+        with col_btn2:
+            if st.button("▶ Uppdatera nu", use_container_width=True):
+                st.rerun()
 
         st.divider()
 
@@ -693,8 +721,10 @@ def main():
             f'<span style="color:{color};font-size:1.1em">'
             f"{cp:.2f} SEK &nbsp; {arrow} {chg:+.2f} ({pchg:+.2f}%)</span>",
             unsafe_allow_html=True)
+        interval_label = "1 min" if st.session_state.refresh_interval == 60 else "5 min"
         st.caption(f"Ticker: **{ticker}** &nbsp;|&nbsp; Börs: Nasdaq Stockholm &nbsp;|&nbsp; "
-                   f"Valuta: SEK &nbsp;|&nbsp; Sektor: {info.get('sector','N/A')}")
+                   f"Valuta: SEK &nbsp;|&nbsp; Sektor: {info.get('sector','N/A')} &nbsp;|&nbsp; "
+                   f"🔄 Live-kurs uppdateras var {interval_label}")
     with col_h2:
         if st.session_state.admin:
             st.markdown('<div class="admin-banner" style="text-align:center">🔓 ADMIN</div>',
