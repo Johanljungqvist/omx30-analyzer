@@ -765,9 +765,18 @@ def badge(signal: str) -> str:
 def main():
     if "admin" not in st.session_state:
         st.session_state.admin = False
+    if "refresh_interval" not in st.session_state:
+        st.session_state.refresh_interval = 60
+    if "dcf_interval_min" not in st.session_state:
+        st.session_state.dcf_interval_min = 10
+    if "mc_interval_min" not in st.session_state:
+        st.session_state.mc_interval_min = 10
+    if "dcf_cache" not in st.session_state:
+        st.session_state.dcf_cache = {}   # {ticker: (result, params, timestamp)}
+    if "mc_cache" not in st.session_state:
+        st.session_state.mc_cache = {}    # {ticker: (mc_res, params, timestamp)}
 
     # ── AUTO-REFRESH ─────────────────────────────────────────────────────────
-    # Körs innan sidebar så räknaren alltid är aktiv
     if "refresh_interval" not in st.session_state:
         st.session_state.refresh_interval = 60
 
@@ -1329,13 +1338,38 @@ def main():
                                      format="%d%%") / 100
             dcf_years    = st.slider("Prognosår",               3,    15,  5)
 
-            st.caption(f"Tillväxt: **{dcf_growth*100:.0f}%** | "
-                       f"WACC: **{dcf_wacc*100:.0f}%** | "
-                       f"Terminal: **{dcf_terminal*100:.0f}%**")
+            st.divider()
+            st.markdown("**Auto-uppdatering**")
+            dcf_interval_opt = st.radio(
+                "Uppdateringsintervall",
+                options=[10, 30],
+                format_func=lambda x: f"{x} min",
+                index=0 if st.session_state.dcf_interval_min == 10 else 1,
+                key="dcf_interval_radio",
+                horizontal=True,
+            )
+            if dcf_interval_opt != st.session_state.dcf_interval_min:
+                st.session_state.dcf_interval_min = dcf_interval_opt
 
         with col_dcf:
-            result = dcf_valuation(info, fin["cashflow"],
-                                   dcf_growth, dcf_wacc, dcf_terminal, dcf_years)
+            dcf_params_now = (ticker, dcf_growth, dcf_wacc, dcf_terminal, dcf_years, round(cp, 1))
+            cached = st.session_state.dcf_cache.get(ticker)
+            now_ts = time.time()
+            need_recalc = (
+                cached is None
+                or cached[1] != dcf_params_now
+                or (now_ts - cached[2]) >= st.session_state.dcf_interval_min * 60
+            )
+            if need_recalc:
+                result = dcf_valuation(info, fin["cashflow"],
+                                       dcf_growth, dcf_wacc, dcf_terminal, dcf_years)
+                st.session_state.dcf_cache[ticker] = (result, dcf_params_now, now_ts)
+            else:
+                result = cached[0]
+                now_ts = cached[2]
+
+            calc_time = time.strftime("%H:%M:%S", time.localtime(now_ts))
+            st.caption(f"🕐 Senast beräknad: **{calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.dcf_interval_min} min**")
 
             if "error" in result:
                 st.warning(result["error"])
@@ -1359,7 +1393,6 @@ def main():
 
                 st.plotly_chart(chart_dcf_waterfall(result), use_container_width=True)
 
-                # Tabellöversikt
                 st.subheader("Projicerade fria kassaflöden")
                 fcf_rows = []
                 g = dcf_growth
@@ -1373,7 +1406,6 @@ def main():
                     g *= 0.85
                 st.dataframe(pd.DataFrame(fcf_rows), hide_index=True, use_container_width=True)
 
-                # Scenarioanalys
                 st.divider()
                 st.subheader("Känslighetsanalys (Säkerhetsmarginal %)")
                 growth_range = [0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15]
@@ -1401,13 +1433,42 @@ def main():
 
         mc_col, mc_par = st.columns([3, 1])
         with mc_par:
-            n_sim   = st.slider("Simuleringar",   100, 3000, 500, 100)
-            n_days  = st.slider("Handelsdagar",    60,  504, 252,  21)
-            ci_val  = st.slider("Konfidensgrad",  0.90, 0.99, 0.95, 0.01)
+            n_sim  = st.slider("Simuleringar",   100, 3000, 500, 100)
+            n_days = st.slider("Handelsdagar",    60,  504, 252,  21)
+            ci_val = st.slider("Konfidensgrad",  0.90, 0.99, 0.95, 0.01)
+
+            st.divider()
+            st.markdown("**Auto-uppdatering**")
+            mc_interval_opt = st.radio(
+                "Uppdateringsintervall",
+                options=[10, 30],
+                format_func=lambda x: f"{x} min",
+                index=0 if st.session_state.mc_interval_min == 10 else 1,
+                key="mc_interval_radio",
+                horizontal=True,
+            )
+            if mc_interval_opt != st.session_state.mc_interval_min:
+                st.session_state.mc_interval_min = mc_interval_opt
 
         with mc_col:
-            with st.spinner("Kör Monte Carlo…"):
-                mc_res = monte_carlo(df, n_sim, n_days, ci_val)
+            mc_params_now = (ticker, n_sim, n_days, round(ci_val, 2), round(cp, 1))
+            mc_cached = st.session_state.mc_cache.get(ticker)
+            mc_now_ts = time.time()
+            mc_need_recalc = (
+                mc_cached is None
+                or mc_cached[1] != mc_params_now
+                or (mc_now_ts - mc_cached[2]) >= st.session_state.mc_interval_min * 60
+            )
+            if mc_need_recalc:
+                with st.spinner("Kör Monte Carlo…"):
+                    mc_res = monte_carlo(df, n_sim, n_days, ci_val)
+                st.session_state.mc_cache[ticker] = (mc_res, mc_params_now, mc_now_ts)
+            else:
+                mc_res    = mc_cached[0]
+                mc_now_ts = mc_cached[2]
+
+            mc_calc_time = time.strftime("%H:%M:%S", time.localtime(mc_now_ts))
+            st.caption(f"🕐 Senast beräknad: **{mc_calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.mc_interval_min} min**")
 
             st.plotly_chart(chart_mc(mc_res, selected), use_container_width=True)
 
