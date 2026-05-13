@@ -933,15 +933,20 @@ def main():
         col_dcf, col_params = st.columns([3, 1])
         with col_params:
             st.markdown("**Anpassa parametrar**")
-            raw_growth    = info.get("revenueGrowth") or 0.07
-            init_growth   = float(np.clip(raw_growth, 0.0, 0.40))
-            dcf_growth    = st.slider("Tillväxttakt år 1", 0.0, 0.40, init_growth, 0.01,
-                                      format="%.0f%%")
-            dcf_wacc      = st.slider("WACC",               0.04, 0.20, 0.09,        0.005,
-                                      format="%.1f%%")
-            dcf_terminal  = st.slider("Terminal tillväxt",  0.01, 0.05, 0.025,       0.005,
-                                      format="%.1f%%")
-            dcf_years     = st.slider("Prognosår",          3,    15,   5)
+            raw_growth   = info.get("revenueGrowth") or 0.07
+            init_growth  = int(round(float(np.clip(raw_growth, 0.0, 0.40)) * 100))
+
+            dcf_growth   = st.slider("Tillväxttakt år 1 (%)",  0,    40,  init_growth, 1,
+                                     format="%d%%") / 100
+            dcf_wacc     = st.slider("WACC (%)",                4,    20,  9,           1,
+                                     format="%d%%") / 100
+            dcf_terminal = st.slider("Terminal tillväxt (%)",   1,     5,  2,           1,
+                                     format="%d%%") / 100
+            dcf_years    = st.slider("Prognosår",               3,    15,  5)
+
+            st.caption(f"Tillväxt: **{dcf_growth*100:.0f}%** | "
+                       f"WACC: **{dcf_wacc*100:.0f}%** | "
+                       f"Terminal: **{dcf_terminal*100:.0f}%**")
 
         with col_dcf:
             result = dcf_valuation(info, fin["cashflow"],
