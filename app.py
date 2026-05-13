@@ -1044,81 +1044,148 @@ def main():
 
         st.divider()
 
-        # ── SEKTION 2: Värdering, hälsa, utdelning, analytiker ───────────────
-        c1, c2, c3, c4 = st.columns(4)
+        # ── Beräkna TTM-värden från 4 senaste kvartal ────────────────────────
+        ttm_ni   = sum(filter(None, [_val(qi, i, "Net Income","Net Income Common Stockholders") for i in range(4)])) or None
+        ttm_rev  = sum(filter(None, [_val(qi, i, "Total Revenue","Operating Revenue") for i in range(4)])) or None
+        ttm_oi   = sum(filter(None, [_val(qi, i, "Operating Income","EBIT") for i in range(4)])) or None
+        ttm_gp   = sum(filter(None, [_val(qi, i, "Gross Profit") for i in range(4)])) or None
+        ttm_ebitda= sum(filter(None, [_val(qi, i, "EBITDA","Normalized EBITDA") for i in range(4)])) or None
+        ttm_fcf  = sum(filter(None, [_val(qcf, i, "Free Cash Flow") for i in range(4)])) or None
+        ttm_ocf  = sum(filter(None, [_val(qcf, i, "Operating Cash Flow") for i in range(4)])) or None
+        ttm_int  = sum(filter(None, [_val(qi, i, "Interest Expense","Net Interest Income") for i in range(4)])) or None
+
+        net_debt  = _val(qb, 0, "Net Debt")
+        tot_eq    = _val(qb, 0, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
+        tot_debt  = _val(qb, 0, "Total Debt")
+        cash_q    = _val(qb, 0, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
+        tot_assets= _val(qb, 0, "Total Assets")
+        cur_assets= _val(qb, 0, "Current Assets","Total Current Assets")
+        cur_liab  = _val(qb, 0, "Current Liabilities","Total Current Liabilities")
+        inv_q     = _val(qb, 0, "Inventory")
+        capex_q   = _val(qcf, 0, "Capital Expenditure")
+        mktcap    = info.get("marketCap")
+
+        # Beräknade nyckeltal
+        roe_calc   = ttm_ni / tot_eq         if ttm_ni and tot_eq and tot_eq > 0 else None
+        roa_calc   = ttm_ni / tot_assets     if ttm_ni and tot_assets else None
+        invested_k = (tot_eq + tot_debt)     if tot_eq and tot_debt else None
+        roic_calc  = ttm_oi / invested_k     if ttm_oi and invested_k and invested_k > 0 else None
+        nd_ebitda  = net_debt / ttm_ebitda   if net_debt and ttm_ebitda and ttm_ebitda > 0 else None
+        fcf_yield  = ttm_fcf / mktcap        if ttm_fcf and mktcap else None
+        fcf_margin = ttm_fcf / ttm_rev       if ttm_fcf and ttm_rev else None
+        ni_margin  = ttm_ni  / ttm_rev       if ttm_ni  and ttm_rev else None
+        oi_margin  = ttm_oi  / ttm_rev       if ttm_oi  and ttm_rev else None
+        gp_margin  = ttm_gp  / ttm_rev       if ttm_gp  and ttm_rev else None
+        ebitda_mg  = ttm_ebitda / ttm_rev    if ttm_ebitda and ttm_rev else None
+        quick_r    = (cur_assets - (inv_q or 0)) / cur_liab if cur_assets and cur_liab else None
+        int_cov    = ttm_oi / abs(ttm_int)   if ttm_oi and ttm_int and ttm_int != 0 else None
+        ps_calc    = mktcap / ttm_rev        if mktcap and ttm_rev else None
+        pe_calc    = mktcap / ttm_ni         if mktcap and ttm_ni and ttm_ni > 0 else None
+        ev         = info.get("enterpriseValue")
+        ev_ebitda_c= ev / ttm_ebitda         if ev and ttm_ebitda and ttm_ebitda > 0 else None
+        ev_rev_c   = ev / ttm_rev            if ev and ttm_rev else None
+        eps_ttm    = ttm_ni / shares         if ttm_ni and shares else None
+        rev_yoy    = None
+        if not qi.empty and len(qi.columns) >= 5:
+            r_now  = _val(qi, 0, "Total Revenue","Operating Revenue")
+            r_year = _val(qi, 4, "Total Revenue","Operating Revenue")
+            if r_now and r_year and r_year != 0:
+                rev_yoy = (r_now - r_year) / abs(r_year)
+        ni_yoy = None
+        if not qi.empty and len(qi.columns) >= 5:
+            n_now  = _val(qi, 0, "Net Income")
+            n_year = _val(qi, 4, "Net Income")
+            if n_now and n_year and n_year != 0:
+                ni_yoy = (n_now - n_year) / abs(n_year)
+
         fpe = info.get("forwardPE")
 
+        # ── SEKTION 2: Värdering, hälsa, lönsamhet, utdelning/analytiker ────
+        c1, c2, c3, c4 = st.columns(4)
+
         with c1:
-            st.subheader("Värdering")
+            st.subheader("📊 Värdering")
+            pe_v   = info.get("trailingPE") or pe_calc
+            ps_v   = info.get("priceToSalesTrailingTwelveMonths") or ps_calc
+            evebit = info.get("enterpriseToEbitda") or ev_ebitda_c
+            evrev  = info.get("enterpriseToRevenue") or ev_rev_c
             items = {
-                "P/E (TTM)":      fmt_num(info.get("trailingPE")),
-                "P/E (forward)":  fmt_num(fpe) if fpe and fpe < 200 else "N/A",
-                "PEG":            fmt_num(info.get("pegRatio")),
-                "P/B":            fmt_num(pb_corr),
-                "P/S (TTM)":      fmt_num(info.get("priceToSalesTrailingTwelveMonths")),
-                "EV/EBITDA":      fmt_num(info.get("enterpriseToEbitda")),
-                "EV/Revenue":     fmt_num(info.get("enterpriseToRevenue")),
-                "Börsvärde":      fmt_big(info.get("marketCap")),
-                "EV":             fmt_big(info.get("enterpriseValue")),
+                "P/E (TTM)":         fmt_num(pe_v),
+                "P/E (forward)":     fmt_num(fpe) if fpe and 0 < fpe < 200 else "N/A",
+                "PEG":               fmt_num(info.get("pegRatio")),
+                "P/B":               fmt_num(pb_corr),
+                "P/S (TTM)":         fmt_num(ps_v),
+                "EV/EBITDA":         fmt_num(evebit),
+                "EV/Revenue":        fmt_num(evrev),
+                "EV/EBIT":           fmt_num(ev/ttm_oi if ev and ttm_oi and ttm_oi > 0 else None),
+                "FCF-yield":         fmt_pct(fcf_yield),
+                "Börsvärde":         fmt_big(mktcap),
+                "Enterprise Value":  fmt_big(ev),
             }
             for k, v in items.items(): st.metric(k, v)
 
         with c2:
-            st.subheader("Finansiell hälsa")
-            net_debt  = _val(qb, 0, "Net Debt")
-            tot_eq    = _val(qb, 0, "Common Stock Equity","Stockholders Equity")
-            tot_debt  = _val(qb, 0, "Total Debt")
-            cash_q    = _val(qb, 0, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
-            tot_assets= _val(qb, 0, "Total Assets")
-            ocf_q     = _val(qcf, 0, "Operating Cash Flow")
-            capex_q   = _val(qcf, 0, "Capital Expenditure")
-            nd_ebitda = net_debt / ebitda_q if net_debt and ebitda_q and ebitda_q > 0 else None
+            st.subheader("🏦 Finansiell hälsa")
+            ocf_q = _val(qcf, 0, "Operating Cash Flow")
             items = {
-                "Nettoskuld":       fmt_big(net_debt),
-                "Nettoskuld/EBITDA":fmt_num(nd_ebitda),
-                "Total skuld":      fmt_big(tot_debt),
-                "Eget kapital":     fmt_big(tot_eq),
-                "Kassa & likvida":  fmt_big(cash_q),
-                "Totala tillgångar":fmt_big(tot_assets),
-                "Operativt CF":     fmt_big(ocf_q),
-                "CapEx":            fmt_big(capex_q),
-                "Skuld/EK":         fmt_num(info.get("debtToEquity")),
-                "Likviditetsgrad":  fmt_num(info.get("currentRatio")),
+                "Nettoskuld":          fmt_big(net_debt),
+                "Nettoskuld/EBITDA":   fmt_num(nd_ebitda),
+                "Total skuld":         fmt_big(tot_debt),
+                "Skuld/EK":            fmt_num(info.get("debtToEquity") or (tot_debt/tot_eq if tot_debt and tot_eq and tot_eq > 0 else None)),
+                "Eget kapital":        fmt_big(tot_eq),
+                "Kassa & likvida":     fmt_big(cash_q),
+                "Totala tillgångar":   fmt_big(tot_assets),
+                "Likviditetsgrad":     fmt_num(info.get("currentRatio") or (cur_assets/cur_liab if cur_assets and cur_liab else None)),
+                "Snabblikviditet":     fmt_num(quick_r),
+                "Räntetäckning":       fmt_num(int_cov),
+                "Operativt CF (TTM)":  fmt_big(ttm_ocf),
+                "CapEx (senaste Q)":   fmt_big(capex_q),
             }
             for k, v in items.items(): st.metric(k, v)
 
         with c3:
-            st.subheader("Lönsamhet & Tillväxt")
-            # ROE beräknad från rapport-data
-            ttm_ni  = sum(filter(None, [_val(qi, i, "Net Income") for i in range(4)]))
-            roe_calc = ttm_ni / tot_eq if ttm_ni and tot_eq and tot_eq > 0 else None
-            roa_calc = ttm_ni / tot_assets if ttm_ni and tot_assets and tot_assets > 0 else None
-            ttm_rev  = sum(filter(None, [_val(qi, i, "Total Revenue","Operating Revenue") for i in range(4)]))
+            st.subheader("📈 Lönsamhet & Marginaler")
             items = {
-                "ROE (beräknad)":    f"{roe_calc*100:.1f}%" if roe_calc else fmt_pct(info.get("returnOnEquity")),
-                "ROA (beräknad)":    f"{roa_calc*100:.1f}%" if roa_calc else fmt_pct(info.get("returnOnAssets")),
-                "Intäkter (TTM)":    fmt_big(ttm_rev if ttm_rev else info.get("totalRevenue")),
-                "Intäktstillväxt":   fmt_pct(info.get("revenueGrowth")),
-                "Vinsttillväxt":     fmt_pct(info.get("earningsGrowth")),
-                "R&D":               fmt_big(_val(qi, 0, "Research And Development")),
-                "EPS (TTM)":         fmt_num(info.get("trailingEps")),
+                "ROE":               f"{roe_calc*100:.1f}%"  if roe_calc  else fmt_pct(info.get("returnOnEquity")),
+                "ROA":               f"{roa_calc*100:.1f}%"  if roa_calc  else fmt_pct(info.get("returnOnAssets")),
+                "ROIC":              f"{roic_calc*100:.1f}%" if roic_calc else "N/A",
+                "Bruttomarginal":    f"{gp_margin*100:.1f}%" if gp_margin  else "N/A",
+                "Rörelsemarginal":   f"{oi_margin*100:.1f}%" if oi_margin  else fmt_pct(info.get("operatingMargins")),
+                "Nettomarginal":     f"{ni_margin*100:.1f}%" if ni_margin  else fmt_pct(info.get("profitMargins")),
+                "EBITDA-marginal":   f"{ebitda_mg*100:.1f}%" if ebitda_mg  else "N/A",
+                "FCF-marginal":      f"{fcf_margin*100:.1f}%" if fcf_margin else "N/A",
+                "Intäkter (TTM)":    fmt_big(ttm_rev or info.get("totalRevenue")),
+                "Intäktstillväxt QoQ":fmt_pct(info.get("revenueGrowth") or rev_yoy),
+                "Vinsttillväxt QoQ": fmt_pct(info.get("earningsGrowth") or ni_yoy),
+                "EPS (TTM)":         fmt_num(info.get("trailingEps") or eps_ttm),
                 "Goodwill":          fmt_big(_val(qb, 0, "Goodwill And Other Intangible Assets","Goodwill")),
+                "R&D":               fmt_big(_val(qi, 0, "Research And Development")),
             }
             for k, v in items.items(): st.metric(k, v)
 
         with c4:
-            st.subheader("Utdelning & Analytiker")
+            st.subheader("💰 Utdelning & Analytiker")
+            n_analysts = info.get("numberOfAnalystOpinions")
+            tgt_low    = info.get("targetLowPrice")
+            tgt_high   = info.get("targetHighPrice")
+            tgt_mean   = info.get("targetMeanPrice")
+            tgt_med    = info.get("targetMedianPrice")
             items = {
                 "Direktavkastning":    fmt_pct(dy),
                 "Utdelning/aktie":     fmt_num(info.get("dividendRate")),
                 "Utdelningsandel":     fmt_pct(info.get("payoutRatio")),
+                "Ex-utdelningsdatum":  str(info.get("exDividendDate","N/A"))[:10] if info.get("exDividendDate") else "N/A",
                 "Beta (vs OMXS30)":    fmt_num(beta_omx),
                 "Antal aktier":        fmt_big(info.get("sharesOutstanding"), ""),
+                "Insiderägande":       fmt_pct(info.get("heldPercentInsiders")),
+                "Institutionellt äg.": fmt_pct(info.get("heldPercentInstitutions")),
                 "52v förändring":      fmt_pct(info.get("52WeekChange")),
-                "Riktkurs (medel)":    fmt_num(info.get("targetMeanPrice")),
-                "Riktkurs potential":  f"{(info.get('targetMeanPrice',cp)/cp-1)*100:+.1f}%" if info.get("targetMeanPrice") else "N/A",
+                "Riktkurs (medel)":    fmt_num(tgt_mean),
+                "Riktkurs (median)":   fmt_num(tgt_med),
+                "Riktkurs (låg/hög)":  f"{fmt_num(tgt_low)} / {fmt_num(tgt_high)}" if tgt_low and tgt_high else "N/A",
+                "Riktkurs potential":  f"{(tgt_mean/cp-1)*100:+.1f}%" if tgt_mean else "N/A",
                 "Rekommendation":      rec_map.get(rec, rec.upper() if rec else "N/A"),
-                "Insider-ägarandel":   fmt_pct(info.get("heldPercentInsiders")),
+                f"Antal analytiker":   str(n_analysts) if n_analysts else "N/A",
             }
             for k, v in items.items(): st.metric(k, v)
 
