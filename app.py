@@ -1045,14 +1045,20 @@ def main():
         st.divider()
 
         # ── Beräkna TTM-värden från 4 senaste kvartal ────────────────────────
-        ttm_ni   = sum(filter(None, [_val(qi, i, "Net Income","Net Income Common Stockholders") for i in range(4)])) or None
-        ttm_rev  = sum(filter(None, [_val(qi, i, "Total Revenue","Operating Revenue") for i in range(4)])) or None
-        ttm_oi   = sum(filter(None, [_val(qi, i, "Operating Income","EBIT") for i in range(4)])) or None
-        ttm_gp   = sum(filter(None, [_val(qi, i, "Gross Profit") for i in range(4)])) or None
-        ttm_ebitda= sum(filter(None, [_val(qi, i, "EBITDA","Normalized EBITDA") for i in range(4)])) or None
-        ttm_fcf  = sum(filter(None, [_val(qcf, i, "Free Cash Flow") for i in range(4)])) or None
-        ttm_ocf  = sum(filter(None, [_val(qcf, i, "Operating Cash Flow") for i in range(4)])) or None
-        ttm_int  = sum(filter(None, [_val(qi, i, "Interest Expense","Net Interest Income") for i in range(4)])) or None
+        def _ttm(df, *keys):
+            vals = [_val(df, i, *keys) for i in range(4)]
+            total = sum(v for v in vals if v is not None)
+            return total if total != 0 else None
+
+        ttm_ni     = _ttm(qi,  "Net Income","Net Income Common Stockholders")
+        ttm_rev    = _ttm(qi,  "Total Revenue","Operating Revenue")
+        ttm_oi     = _ttm(qi,  "Operating Income","Total Operating Income As Reported")
+        ttm_ebit   = _ttm(qi,  "EBIT") or ttm_oi
+        ttm_gp     = _ttm(qi,  "Gross Profit")
+        ttm_ebitda = _ttm(qi,  "EBITDA","Normalized EBITDA")
+        ttm_fcf    = _ttm(qcf, "Free Cash Flow")
+        ttm_ocf    = _ttm(qcf, "Operating Cash Flow")
+        ttm_int    = _ttm(qi,  "Interest Expense Non Operating","Interest Expense")
 
         net_debt  = _val(qb, 0, "Net Debt")
         tot_eq    = _val(qb, 0, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
@@ -1105,22 +1111,25 @@ def main():
 
         with c1:
             st.subheader("📊 Värdering")
-            pe_v   = info.get("trailingPE") or pe_calc
-            ps_v   = info.get("priceToSalesTrailingTwelveMonths") or ps_calc
-            evebit = info.get("enterpriseToEbitda") or ev_ebitda_c
-            evrev  = info.get("enterpriseToRevenue") or ev_rev_c
+            pe_v    = info.get("trailingPE")
+            if (pe_v is None or pe_v <= 0) and pe_calc and pe_calc > 0:
+                pe_v = pe_calc
+            ps_v    = info.get("priceToSalesTrailingTwelveMonths") or ps_calc
+            evebit  = info.get("enterpriseToEbitda") or ev_ebitda_c
+            evrev   = info.get("enterpriseToRevenue") or ev_rev_c
+            ev_ebit = ev / ttm_ebit if ev and ttm_ebit and ttm_ebit > 0 else None
             items = {
-                "P/E (TTM)":         fmt_num(pe_v),
-                "P/E (forward)":     fmt_num(fpe) if fpe and 0 < fpe < 200 else "N/A",
-                "PEG":               fmt_num(info.get("pegRatio")),
-                "P/B":               fmt_num(pb_corr),
-                "P/S (TTM)":         fmt_num(ps_v),
-                "EV/EBITDA":         fmt_num(evebit),
-                "EV/Revenue":        fmt_num(evrev),
-                "EV/EBIT":           fmt_num(ev/ttm_oi if ev and ttm_oi and ttm_oi > 0 else None),
-                "FCF-yield":         fmt_pct(fcf_yield),
-                "Börsvärde":         fmt_big(mktcap),
-                "Enterprise Value":  fmt_big(ev),
+                "P/E (TTM)":        fmt_num(pe_v),
+                "P/E (forward)":    fmt_num(fpe) if fpe and 0 < fpe < 200 else "N/A",
+                "PEG":              fmt_num(info.get("pegRatio")),
+                "P/B":              fmt_num(pb_corr),
+                "P/S (TTM)":        fmt_num(ps_v),
+                "EV/EBITDA":        fmt_num(evebit),
+                "EV/EBIT":          fmt_num(ev_ebit),
+                "EV/Revenue":       fmt_num(evrev),
+                "FCF-yield":        fmt_pct(fcf_yield),
+                "Börsvärde":        fmt_big(mktcap),
+                "Enterprise Value": fmt_big(ev),
             }
             for k, v in items.items(): st.metric(k, v)
 
@@ -1144,22 +1153,29 @@ def main():
             for k, v in items.items(): st.metric(k, v)
 
         with c3:
-            st.subheader("📈 Lönsamhet & Marginaler")
+            st.subheader("📈 Lönsamhet & Resultat (TTM)")
             items = {
-                "ROE":               f"{roe_calc*100:.1f}%"  if roe_calc  else fmt_pct(info.get("returnOnEquity")),
-                "ROA":               f"{roa_calc*100:.1f}%"  if roa_calc  else fmt_pct(info.get("returnOnAssets")),
-                "ROIC":              f"{roic_calc*100:.1f}%" if roic_calc else "N/A",
-                "Bruttomarginal":    f"{gp_margin*100:.1f}%" if gp_margin  else "N/A",
-                "Rörelsemarginal":   f"{oi_margin*100:.1f}%" if oi_margin  else fmt_pct(info.get("operatingMargins")),
-                "Nettomarginal":     f"{ni_margin*100:.1f}%" if ni_margin  else fmt_pct(info.get("profitMargins")),
-                "EBITDA-marginal":   f"{ebitda_mg*100:.1f}%" if ebitda_mg  else "N/A",
-                "FCF-marginal":      f"{fcf_margin*100:.1f}%" if fcf_margin else "N/A",
-                "Intäkter (TTM)":    fmt_big(ttm_rev or info.get("totalRevenue")),
-                "Intäktstillväxt QoQ":fmt_pct(info.get("revenueGrowth") or rev_yoy),
-                "Vinsttillväxt QoQ": fmt_pct(info.get("earningsGrowth") or ni_yoy),
-                "EPS (TTM)":         fmt_num(info.get("trailingEps") or eps_ttm),
-                "Goodwill":          fmt_big(_val(qb, 0, "Goodwill And Other Intangible Assets","Goodwill")),
-                "R&D":               fmt_big(_val(qi, 0, "Research And Development")),
+                "Intäkter (TTM)":      fmt_big(ttm_rev or info.get("totalRevenue")),
+                "Bruttoresultat (TTM)":fmt_big(ttm_gp),
+                "EBIT (TTM)":          fmt_big(ttm_ebit),
+                "EBITDA (TTM)":        fmt_big(ttm_ebitda),
+                "Nettoresultat (TTM)": fmt_big(ttm_ni),
+                "FCF (TTM)":           fmt_big(ttm_fcf),
+                "─── Marginaler ───":  "─────────",
+                "Bruttomarginal":      f"{gp_margin*100:.1f}%"    if gp_margin   else "N/A",
+                "EBIT-marginal":       f"{(ttm_ebit/ttm_rev*100):.1f}%" if ttm_ebit and ttm_rev else fmt_pct(info.get("operatingMargins")),
+                "EBITDA-marginal":     f"{ebitda_mg*100:.1f}%"    if ebitda_mg   else "N/A",
+                "Nettomarginal":       f"{ni_margin*100:.1f}%"    if ni_margin   else fmt_pct(info.get("profitMargins")),
+                "FCF-marginal":        f"{fcf_margin*100:.1f}%"   if fcf_margin  else "N/A",
+                "─── Avkastning ───":  "─────────",
+                "ROE":                 f"{roe_calc*100:.1f}%"     if roe_calc    else fmt_pct(info.get("returnOnEquity")),
+                "ROA":                 f"{roa_calc*100:.1f}%"     if roa_calc    else fmt_pct(info.get("returnOnAssets")),
+                "ROIC":                f"{roic_calc*100:.1f}%"    if roic_calc   else "N/A",
+                "─── Tillväxt ───":    "─────────",
+                "Intäktstillväxt":     fmt_pct(info.get("revenueGrowth") or rev_yoy),
+                "Vinsttillväxt":       fmt_pct(info.get("earningsGrowth") or ni_yoy),
+                "EPS (TTM)":           fmt_num(info.get("trailingEps") or eps_ttm),
+                "R&D":                 fmt_big(_val(qi, 0, "Research And Development")),
             }
             for k, v in items.items(): st.metric(k, v)
 
