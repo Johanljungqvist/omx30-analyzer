@@ -14,11 +14,35 @@ from plotly.subplots import make_subplots
 from scipy import stats
 from streamlit_autorefresh import st_autorefresh
 from datetime import datetime, timedelta
+import time
 import warnings
 import json
 import io
 
 warnings.filterwarnings("ignore")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RETRY — exponentiell backoff vid Yahoo Finance rate-limit
+# ─────────────────────────────────────────────────────────────────────────────
+def _ticker(sym: str) -> yf.Ticker:
+    return yf.Ticker(sym)
+
+
+def _retry(fn, retries: int = 4, base_delay: float = 5.0):
+    """Kör fn(), retry med exponentiell backoff vid rate-limit."""
+    for attempt in range(retries):
+        try:
+            return fn()
+        except Exception as exc:
+            name = type(exc).__name__
+            is_rate = "RateLimit" in name or "rate limit" in str(exc).lower()
+            if is_rate and attempt < retries - 1:
+                wait = base_delay * (2 ** attempt)
+                time.sleep(wait)
+                continue
+            raise
+    return None
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PAGE CONFIG
@@ -119,17 +143,18 @@ OMX30: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
-    df = yf.Ticker(ticker).history(period=period)
+    df = _retry(lambda: _ticker(ticker).history(period=period))
+    if df is None:
+        return pd.DataFrame()
     if not df.empty:
         df.index = pd.to_datetime(df.index).tz_localize(None)
     return df
 
 
-@st.cache_data(ttl=60, show_spinner=False)   # 60 s — matchar 1-min refresh
+@st.cache_data(ttl=60, show_spinner=False)
 def fetch_realtime_price(ticker: str) -> float | None:
     try:
-        fi = yf.Ticker(ticker).fast_info
-        return float(fi.last_price)
+        return float(_retry(lambda: _ticker(ticker).fast_info.last_price))
     except Exception:
         return None
 
@@ -137,7 +162,8 @@ def fetch_realtime_price(ticker: str) -> float | None:
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_info(ticker: str) -> dict:
     try:
-        return yf.Ticker(ticker).info or {}
+        result = _retry(lambda: _ticker(ticker).info)
+        return result or {}
     except Exception:
         return {}
 
@@ -146,8 +172,8 @@ def fetch_info(ticker: str) -> dict:
 def calc_beta_omx(ticker: str) -> float:
     """Beräknar beta mot OMXS30 (^OMX) från 2 års daglig avkastning."""
     try:
-        stock  = yf.Ticker(ticker).history(period="2y")["Close"].pct_change().dropna()
-        omx    = yf.Ticker("^OMX").history(period="2y")["Close"].pct_change().dropna()
+        stock  = _retry(lambda: _ticker(ticker).history(period="2y"))["Close"].pct_change().dropna()
+        omx    = _retry(lambda: _ticker("^OMX").history(period="2y"))["Close"].pct_change().dropna()
         common = stock.index.intersection(omx.index)
         if len(common) < 100:
             return float(fetch_info(ticker).get("beta") or 1.0)
@@ -161,7 +187,7 @@ def calc_beta_omx(ticker: str) -> float:
 def fetch_fx_rate(pair: str) -> float:
     """Hämtar valutakurs, t.ex. 'EURSEK=X' eller 'USDSEK=X'."""
     try:
-        return float(yf.Ticker(pair).fast_info.last_price)
+        return float(_retry(lambda: _ticker(pair).fast_info.last_price))
     except Exception:
         return {"EURSEK=X": 11.0, "USDSEK=X": 10.5}.get(pair, 1.0)
 
@@ -227,19 +253,19 @@ def most_recent_quarter_label(info: dict) -> str:
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_financials(ticker: str) -> dict:
-    t = yf.Ticker(ticker)
     def safe(fn):
         try:
-            r = fn()
+            r = _retry(fn)
             return r if r is not None and not r.empty else pd.DataFrame()
         except Exception:
             return pd.DataFrame()
 
+    t = _ticker(ticker)
     return {
-        "income":    safe(lambda: t.income_stmt),
-        "balance":   safe(lambda: t.balance_sheet),
-        "cashflow":  safe(lambda: t.cashflow),
-        "q_income":  safe(lambda: t.quarterly_income_stmt),
+        "income":   safe(lambda: t.income_stmt),
+        "balance":  safe(lambda: t.balance_sheet),
+        "cashflow": safe(lambda: t.cashflow),
+        "q_income": safe(lambda: t.quarterly_income_stmt),
     }
 
 
@@ -747,15 +773,36 @@ def main():
                 unsafe_allow_html=True)
 
     # ── DATA ─────────────────────────────────────────────────────────────────
-    with st.spinner(f"Hämtar data för {selected}…"):
-        df   = fetch_history(ticker, period)
-        info = fetch_info(ticker)
-        fin  = fetch_financials(ticker)
-        beta_omx = calc_beta_omx(ticker)
+    try:
+        with st.spinner(f"Hämtar data för {selected}…"):
+            df       = fetch_history(ticker, period)
+            info     = fetch_info(ticker)
+            fin      = fetch_financials(ticker)
+            beta_omx = calc_beta_omx(ticker)
+    except Exception as exc:
+        name = type(exc).__name__
+        if "RateLimit" in name or "rate" in str(exc).lower():
+            st.warning(
+                "⏳ **Yahoo Finance begränsar tillfälligt anropen** (rate limit). "
+                "Vänta 30 sekunder och tryck sedan på knappen nedan.",
+                icon="⚠️"
+            )
+        else:
+            st.error(f"Fel vid datahämtning: {exc}")
+        if st.button("🔄 Försök igen"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
 
     if df is None or df.empty:
-        st.error(f"Kunde inte hämta data för {ticker}.")
-        return
+        st.warning(
+            f"Ingen kursdata för **{ticker}**. "
+            "Yahoo Finance kan vara tillfälligt otillgängligt — försök om en stund."
+        )
+        if st.button("🔄 Försök igen"):
+            st.cache_data.clear()
+            st.rerun()
+        st.stop()
 
     # ── HEADER ───────────────────────────────────────────────────────────────
     # Realtidspris (5 min cache) — fallback till historik
