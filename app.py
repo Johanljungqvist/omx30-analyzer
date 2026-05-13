@@ -262,11 +262,75 @@ def fetch_financials(ticker: str) -> dict:
 
     t = _ticker(ticker)
     return {
-        "income":   safe(lambda: t.income_stmt),
-        "balance":  safe(lambda: t.balance_sheet),
-        "cashflow": safe(lambda: t.cashflow),
-        "q_income": safe(lambda: t.quarterly_income_stmt),
+        "income":     safe(lambda: t.income_stmt),
+        "balance":    safe(lambda: t.balance_sheet),
+        "cashflow":   safe(lambda: t.cashflow),
+        "q_income":   safe(lambda: t.quarterly_income_stmt),
+        "q_balance":  safe(lambda: t.quarterly_balance_sheet),
+        "q_cashflow": safe(lambda: t.quarterly_cashflow),
     }
+
+
+def _row(df: pd.DataFrame, *keys) -> pd.Series | None:
+    """Hämtar första matchande rad från DataFrame, returnerar None om saknas."""
+    for k in keys:
+        if k in df.index:
+            return df.loc[k]
+    return None
+
+
+def _val(df: pd.DataFrame, col_idx: int, *keys) -> float | None:
+    """Hämtar ett enskilt värde från statement, None om saknas."""
+    if df.empty or col_idx >= len(df.columns):
+        return None
+    for k in keys:
+        if k in df.index:
+            v = df.loc[k].iloc[col_idx]
+            return float(v) if pd.notna(v) else None
+    return None
+
+
+def q_label(df: pd.DataFrame, idx: int) -> str:
+    """Returnerar 'Q1 2026' för kolumn idx i quarterly statement."""
+    if df.empty or idx >= len(df.columns):
+        return "—"
+    c = df.columns[idx]
+    return f"Q{(c.month-1)//3+1} {c.year}"
+
+
+def build_report_table(df: pd.DataFrame, rows: dict, scale: float = 1e9, unit: str = "Mdr SEK") -> pd.DataFrame | None:
+    """Bygger en ren rapporttabell med svenska etiketter. rows = {etikett: [möjliga yfinance-nycklar]}"""
+    if df.empty:
+        return None
+    cols = df.columns[:4]
+    col_labels = [f"Q{(c.month-1)//3+1} {c.year}" for c in cols]
+    data = {}
+    for label, keys in rows.items():
+        series = _row(df, *keys)
+        if series is not None:
+            data[label] = [
+                f"{float(series.iloc[i])/scale:,.2f}" if i < len(series) and pd.notna(series.iloc[i]) else "—"
+                for i in range(len(cols))
+            ]
+        else:
+            data[label] = ["—"] * len(cols)
+    return pd.DataFrame(data, index=col_labels).T
+
+
+def yoy_change(df: pd.DataFrame, *keys) -> str:
+    """Beräknar YoY förändring senaste kvartal vs samma kvartal föregående år."""
+    if df.empty or len(df.columns) < 5:
+        return ""
+    for k in keys:
+        if k in df.index:
+            curr = df.loc[k].iloc[0]
+            prev = df.loc[k].iloc[4] if len(df.columns) > 4 else None
+            if prev and pd.notna(curr) and pd.notna(prev) and prev != 0:
+                chg = (float(curr) - float(prev)) / abs(float(prev)) * 100
+                arrow = "▲" if chg > 0 else "▼"
+                color = "#00e676" if chg > 0 else "#ff1744"
+                return f'<span style="color:{color}">{arrow} {chg:+.1f}% YoY</span>'
+    return ""
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -926,166 +990,241 @@ def main():
     # TAB 2 — FUNDAMENTAL ANALYS
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[1]:
-        # ── Senaste rapport-banner ────────────────────────────────────────────
-        mrq      = most_recent_quarter_label(info)
-        fin_cur  = info.get("financialCurrency", "SEK")
-        cur_note = f" · Redovisningsvaluta: {fin_cur}" if fin_cur != "SEK" else ""
-        st.info(f"📄 **Senaste rapport: {mrq}** · Data: TTM / senaste bokslut{cur_note} · Källa: Yahoo Finance")
+        qi  = fin["q_income"]
+        qb  = fin["q_balance"]
+        qcf = fin["q_cashflow"]
+        ai  = fin["income"]
+        ab  = fin["balance"]
+        acf = fin["cashflow"]
 
+        mrq     = q_label(qi, 0) if not qi.empty else most_recent_quarter_label(info)
+        fin_cur = info.get("financialCurrency", "SEK")
         pb_corr = get_corrected_pb(info)
+        dy      = get_dividend_yield(info)
+        rec     = info.get("recommendationKey", "")
+        rec_map = {"buy":"KÖP 🟢","strong_buy":"STARKT KÖP 🟢","hold":"HÅLL 🟡",
+                   "sell":"SÄLJ 🔴","underperform":"UNDERPERFORM 🔴","neutral":"NEUTRAL 🟡"}
 
-        f1, f2, f3 = st.columns(3)
+        # Banner
+        cur_note = f"  |  Redovisningsvaluta: **{fin_cur}**" if fin_cur != "SEK" else ""
+        st.info(f"📄 Senaste rapport: **{mrq}**  |  Källa: Yahoo Finance / Bolagets rapporter{cur_note}")
+        if fin_cur != "SEK":
+            st.caption(f"⚠️  P/B är omräknat från {fin_cur}→SEK via live valutakurs.")
 
-        with f1:
-            st.subheader("Värderingsmultiplar")
-            # Sanity-check: forward P/E > 200 är sannolikt fel i yfinance
-            fpe = info.get("forwardPE")
-            fpe_val = fmt_num(fpe) if fpe and fpe < 200 else "N/A"
-            pb_note = " ⚠️" if fin_cur != "SEK" and info.get("priceToBook") != pb_corr else ""
-            data = {
-                "P/E (trailing, TTM)":   fmt_num(info.get("trailingPE")),
-                "P/E (forward)":         fpe_val,
-                "PEG":                   fmt_num(info.get("pegRatio")),
-                f"P/B (korrekt{pb_note})": fmt_num(pb_corr),
-                "P/S (TTM)":             fmt_num(info.get("priceToSalesTrailingTwelveMonths")),
-                "EV/EBITDA":             fmt_num(info.get("enterpriseToEbitda")),
-                "EV/Revenue":            fmt_num(info.get("enterpriseToRevenue")),
-                "Enterprise Value":      fmt_big(info.get("enterpriseValue")),
-            }
-            for k, v in data.items():
-                st.metric(k, v)
-            if fin_cur != "SEK":
-                st.caption(f"⚠️ P/B korrigerat från {fin_cur}→SEK via valutakurs")
+        # ── SEKTION 1: Senaste kvartal KPIer ─────────────────────────────────
+        st.subheader(f"Nyckeltal från {mrq}")
+        k1,k2,k3,k4,k5,k6 = st.columns(6)
 
-        with f2:
-            st.subheader(f"Lönsamhet ({mrq} / TTM)")
-            # Hämta senaste kvartal direkt från quarterly income stmt
-            q_rev = q_ni = q_oi = None
-            if not fin["q_income"].empty:
-                qi = fin["q_income"]
-                try:
-                    latest_col = qi.columns[0]
-                    q_rev = qi.loc["Total Revenue",   latest_col] if "Total Revenue"   in qi.index else None
-                    q_oi  = qi.loc["Operating Income",latest_col] if "Operating Income" in qi.index else None
-                    q_ni  = qi.loc["Net Income",      latest_col] if "Net Income"       in qi.index else None
-                except Exception:
-                    pass
+        rev_q   = _val(qi, 0, "Total Revenue","Operating Revenue")
+        oi_q    = _val(qi, 0, "Operating Income","EBIT")
+        ni_q    = _val(qi, 0, "Net Income","Net Income Common Stockholders")
+        ebitda_q= _val(qi, 0, "EBITDA","Normalized EBITDA")
+        fcf_q   = _val(qcf, 0, "Free Cash Flow")
+        eps_q   = _val(qi, 0, "Diluted EPS","Basic EPS")
+        shares  = float(info.get("sharesOutstanding") or 1)
+        eps_q_calc = ni_q / shares if ni_q and shares else None
 
-            prof = {
-                f"Intäkter ({mrq})":     fmt_big(q_rev) if q_rev is not None else "N/A",
-                f"Rörelseres. ({mrq})":  fmt_big(q_oi)  if q_oi  is not None else "N/A",
-                f"Nettores. ({mrq})":    fmt_big(q_ni)  if q_ni  is not None else "N/A",
-                "Intäkter (TTM)":        fmt_big(info.get("totalRevenue")),
-                "Bruttomarginal":        fmt_pct(info.get("grossMargins")),
-                "Rörelsemarginal":       fmt_pct(info.get("operatingMargins")),
-                "Nettomarginal":         fmt_pct(info.get("profitMargins")),
-                "ROE":                   fmt_pct(info.get("returnOnEquity")),
-                "ROA":                   fmt_pct(info.get("returnOnAssets")),
-                "EBITDA (TTM)":          fmt_big(info.get("ebitda")),
-                "EPS (TTM)":             fmt_num(info.get("trailingEps")),
-            }
-            for k, v in prof.items():
-                st.metric(k, v)
+        k1.metric(f"Intäkter ({mrq})",    fmt_big(rev_q),
+                  f"{yoy_change(qi,'Total Revenue','Operating Revenue')}" if not qi.empty else "")
+        k2.metric(f"Rörelseresultat",     fmt_big(oi_q))
+        k3.metric(f"Nettoresultat",       fmt_big(ni_q),
+                  f"{yoy_change(qi,'Net Income')}" if not qi.empty else "")
+        k4.metric("EBITDA",               fmt_big(ebitda_q))
+        k5.metric("Fritt kassaflöde",     fmt_big(fcf_q))
+        k6.metric("EPS (kvartal)",        fmt_num(eps_q if eps_q else eps_q_calc))
 
-        with f3:
-            st.subheader("Finansiell hälsa")
-            health = {
-                "Skuld/EK":           fmt_num(info.get("debtToEquity")),
-                "Likviditetsgrad":    fmt_num(info.get("currentRatio")),
-                "Snabblikviditet":    fmt_num(info.get("quickRatio")),
-                "Total skuld":        fmt_big(info.get("totalDebt")),
-                "Kassa":              fmt_big(info.get("totalCash")),
-                "Fritt kassaflöde":   fmt_big(info.get("freeCashflow")),
-                "Intäktstillväxt":    fmt_pct(info.get("revenueGrowth")),
-                "Vinsttillväxt":      fmt_pct(info.get("earningsGrowth")),
-            }
-            for k, v in health.items():
-                st.metric(k, v)
+        # Marginaler beräknade från faktiska siffror
+        if rev_q and rev_q > 0:
+            gp_q = _val(qi, 0, "Gross Profit")
+            m1,m2,m3,m4 = st.columns(4)
+            if gp_q:  m1.metric("Bruttomarginal",   f"{gp_q/rev_q*100:.1f}%")
+            if oi_q:  m2.metric("Rörelsemarginal",   f"{oi_q/rev_q*100:.1f}%")
+            if ni_q:  m3.metric("Nettomarginal",     f"{ni_q/rev_q*100:.1f}%")
+            if ebitda_q: m4.metric("EBITDA-marginal",f"{ebitda_q/rev_q*100:.1f}%")
 
         st.divider()
-        f4, f5 = st.columns(2)
-        with f4:
-            st.subheader("Utdelning & Aktie")
-            dy     = get_dividend_yield(info)
-            dr_sek = info.get("dividendRate")
-            div_data = {
-                "Direktavkastning":   fmt_pct(dy),
-                "Utdelning/aktie (SEK)": fmt_num(dr_sek),
-                "Utdelningsandel":    fmt_pct(info.get("payoutRatio")),
-                "Beta (vs OMXS30)":   fmt_num(beta_omx),
-                "EPS (TTM)":          fmt_num(info.get("trailingEps")),
-                "Antal aktier":       fmt_big(info.get("sharesOutstanding"), ""),
-                "Blankning %":        fmt_pct(info.get("shortPercentOfFloat")),
-                "52v förändring":     fmt_pct(info.get("52WeekChange")),
-            }
-            for k, v in div_data.items():
-                st.metric(k, v)
 
-        with f5:
-            st.subheader("Analytiker & Insider")
-            rec = info.get("recommendationKey", "N/A")
-            rec_map = {"buy":"KÖP 🟢","strong_buy":"STARKT KÖP 🟢","hold":"HÅLL 🟡",
-                       "sell":"SÄLJ 🔴","underperform":"UNDERPERFORM 🔴"}
-            analyst = {
+        # ── SEKTION 2: Värdering, hälsa, utdelning, analytiker ───────────────
+        c1, c2, c3, c4 = st.columns(4)
+        fpe = info.get("forwardPE")
+
+        with c1:
+            st.subheader("Värdering")
+            items = {
+                "P/E (TTM)":      fmt_num(info.get("trailingPE")),
+                "P/E (forward)":  fmt_num(fpe) if fpe and fpe < 200 else "N/A",
+                "PEG":            fmt_num(info.get("pegRatio")),
+                "P/B":            fmt_num(pb_corr),
+                "P/S (TTM)":      fmt_num(info.get("priceToSalesTrailingTwelveMonths")),
+                "EV/EBITDA":      fmt_num(info.get("enterpriseToEbitda")),
+                "EV/Revenue":     fmt_num(info.get("enterpriseToRevenue")),
+                "Börsvärde":      fmt_big(info.get("marketCap")),
+                "EV":             fmt_big(info.get("enterpriseValue")),
+            }
+            for k, v in items.items(): st.metric(k, v)
+
+        with c2:
+            st.subheader("Finansiell hälsa")
+            net_debt  = _val(qb, 0, "Net Debt")
+            tot_eq    = _val(qb, 0, "Common Stock Equity","Stockholders Equity")
+            tot_debt  = _val(qb, 0, "Total Debt")
+            cash_q    = _val(qb, 0, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
+            tot_assets= _val(qb, 0, "Total Assets")
+            ocf_q     = _val(qcf, 0, "Operating Cash Flow")
+            capex_q   = _val(qcf, 0, "Capital Expenditure")
+            nd_ebitda = net_debt / ebitda_q if net_debt and ebitda_q and ebitda_q > 0 else None
+            items = {
+                "Nettoskuld":       fmt_big(net_debt),
+                "Nettoskuld/EBITDA":fmt_num(nd_ebitda),
+                "Total skuld":      fmt_big(tot_debt),
+                "Eget kapital":     fmt_big(tot_eq),
+                "Kassa & likvida":  fmt_big(cash_q),
+                "Totala tillgångar":fmt_big(tot_assets),
+                "Operativt CF":     fmt_big(ocf_q),
+                "CapEx":            fmt_big(capex_q),
+                "Skuld/EK":         fmt_num(info.get("debtToEquity")),
+                "Likviditetsgrad":  fmt_num(info.get("currentRatio")),
+            }
+            for k, v in items.items(): st.metric(k, v)
+
+        with c3:
+            st.subheader("Lönsamhet & Tillväxt")
+            # ROE beräknad från rapport-data
+            ttm_ni  = sum(filter(None, [_val(qi, i, "Net Income") for i in range(4)]))
+            roe_calc = ttm_ni / tot_eq if ttm_ni and tot_eq and tot_eq > 0 else None
+            roa_calc = ttm_ni / tot_assets if ttm_ni and tot_assets and tot_assets > 0 else None
+            ttm_rev  = sum(filter(None, [_val(qi, i, "Total Revenue","Operating Revenue") for i in range(4)]))
+            items = {
+                "ROE (beräknad)":    f"{roe_calc*100:.1f}%" if roe_calc else fmt_pct(info.get("returnOnEquity")),
+                "ROA (beräknad)":    f"{roa_calc*100:.1f}%" if roa_calc else fmt_pct(info.get("returnOnAssets")),
+                "Intäkter (TTM)":    fmt_big(ttm_rev if ttm_rev else info.get("totalRevenue")),
+                "Intäktstillväxt":   fmt_pct(info.get("revenueGrowth")),
+                "Vinsttillväxt":     fmt_pct(info.get("earningsGrowth")),
+                "R&D":               fmt_big(_val(qi, 0, "Research And Development")),
+                "EPS (TTM)":         fmt_num(info.get("trailingEps")),
+                "Goodwill":          fmt_big(_val(qb, 0, "Goodwill And Other Intangible Assets","Goodwill")),
+            }
+            for k, v in items.items(): st.metric(k, v)
+
+        with c4:
+            st.subheader("Utdelning & Analytiker")
+            items = {
+                "Direktavkastning":    fmt_pct(dy),
+                "Utdelning/aktie":     fmt_num(info.get("dividendRate")),
+                "Utdelningsandel":     fmt_pct(info.get("payoutRatio")),
+                "Beta (vs OMXS30)":    fmt_num(beta_omx),
+                "Antal aktier":        fmt_big(info.get("sharesOutstanding"), ""),
+                "52v förändring":      fmt_pct(info.get("52WeekChange")),
                 "Riktkurs (medel)":    fmt_num(info.get("targetMeanPrice")),
-                "Riktkurs (hög)":      fmt_num(info.get("targetHighPrice")),
-                "Riktkurs (låg)":      fmt_num(info.get("targetLowPrice")),
+                "Riktkurs potential":  f"{(info.get('targetMeanPrice',cp)/cp-1)*100:+.1f}%" if info.get("targetMeanPrice") else "N/A",
                 "Rekommendation":      rec_map.get(rec, rec.upper() if rec else "N/A"),
-                "Antal analytiker":    fmt_num(info.get("numberOfAnalystOpinions"), 0),
-                "Potential (medel)":   f"{(info.get('targetMeanPrice',cp)/cp-1)*100:+.1f}%" if info.get("targetMeanPrice") else "N/A",
                 "Insider-ägarandel":   fmt_pct(info.get("heldPercentInsiders")),
-                "Institutionell äg.":  fmt_pct(info.get("heldPercentInstitutions")),
             }
-            for k, v in analyst.items():
-                st.metric(k, v)
+            for k, v in items.items(): st.metric(k, v)
 
-        # ── Kvartalsvis resultatutveckling ────────────────────────────────────
-        if not fin["q_income"].empty:
-            st.divider()
-            st.subheader("Kvartalsvis resultatutveckling (senaste 4 kvartal)")
-            qi = fin["q_income"]
-            q_rows = ["Total Revenue","Gross Profit","Operating Income","Net Income"]
-            available = [r for r in q_rows if r in qi.index]
-            if available:
-                q_data = qi.loc[available, qi.columns[:4]].copy()
-                q_data.columns = [f"Q{(c.month-1)//3+1} {c.year}" for c in q_data.columns]
-                q_data = q_data / 1e9
-                fig_q = px.bar(q_data.T, barmode="group",
-                    title="Kvartalsresultat (Mdr SEK)",
+        # ── SEKTION 3: Kvartalsrapporter (4 senaste) ──────────────────────────
+        st.divider()
+        st.subheader("📊 Kvartalsrapporter — Resultaträkning")
+
+        inc_rows = {
+            "Intäkter (Mdr)":         ["Total Revenue","Operating Revenue"],
+            "Bruttoresultat (Mdr)":   ["Gross Profit"],
+            "EBITDA (Mdr)":           ["EBITDA","Normalized EBITDA"],
+            "Rörelseresultat (Mdr)":  ["Operating Income","EBIT"],
+            "Nettoresultat (Mdr)":    ["Net Income","Net Income Common Stockholders"],
+            "F&U (Mdr)":              ["Research And Development"],
+        }
+        tbl_inc = build_report_table(qi, inc_rows)
+        if tbl_inc is not None:
+            st.dataframe(tbl_inc, use_container_width=True)
+
+            # Graf
+            plot_rows = [k for k in ["Intäkter (Mdr)","Bruttoresultat (Mdr)","Rörelseresultat (Mdr)","Nettoresultat (Mdr)"] if k in tbl_inc.index]
+            if plot_rows:
+                plot_df = tbl_inc.loc[plot_rows].replace("—", None)
+                for col in plot_df.columns:
+                    plot_df[col] = pd.to_numeric(plot_df[col].astype(str).str.replace(",",""), errors="coerce")
+                fig_qi = px.bar(plot_df.T, barmode="group", title="Kvartalsresultat (Mdr)",
                     color_discrete_sequence=["#40c4ff","#00e676","#ffd54f","#ff6d00"])
-                fig_q.update_layout(yaxis_title="Mdr SEK", **_DARK)
-                st.plotly_chart(fig_q, use_container_width=True)
+                fig_qi.update_layout(yaxis_title="Mdr", **_DARK)
+                st.plotly_chart(fig_qi, use_container_width=True)
 
-                # Tabell
-                q_fmt = q_data.copy()
-                for col in q_fmt.columns:
-                    q_fmt[col] = q_fmt[col].map(lambda x: f"{x:.2f} Mdr")
-                q_fmt.index = [r.replace("Total Revenue","Intäkter")
-                                .replace("Gross Profit","Bruttoresultat")
-                                .replace("Operating Income","Rörelseresultat")
-                                .replace("Net Income","Nettoresultat") for r in q_fmt.index]
-                st.dataframe(q_fmt, use_container_width=True)
+        st.subheader("📊 Kvartalsrapporter — Balansräkning")
+        bal_rows = {
+            "Totala tillgångar (Mdr)": ["Total Assets"],
+            "Eget kapital (Mdr)":      ["Common Stock Equity","Stockholders Equity"],
+            "Total skuld (Mdr)":       ["Total Debt"],
+            "Nettoskuld (Mdr)":        ["Net Debt"],
+            "Kassa (Mdr)":             ["Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments"],
+            "Goodwill & immat. (Mdr)": ["Goodwill And Other Intangible Assets"],
+            "Rörelsekapital (Mdr)":    ["Working Capital"],
+        }
+        tbl_bal = build_report_table(qb, bal_rows)
+        if tbl_bal is not None:
+            st.dataframe(tbl_bal, use_container_width=True)
 
-        # ── Historiska årsgrafer ──────────────────────────────────────────────
-        if not fin["income"].empty:
-            st.divider()
-            st.subheader("Årsvis resultaträkning")
-            fig_inc = chart_hist_financials(
-                fin["income"],
-                ["Total Revenue","Gross Profit","Operating Income","Net Income"],
-                "Resultaträkning (Mdr SEK)"
-            )
-            if fig_inc:
-                st.plotly_chart(fig_inc, use_container_width=True)
+        st.subheader("📊 Kvartalsrapporter — Kassaflöde")
+        cf_rows = {
+            "Operativt kassaflöde (Mdr)": ["Operating Cash Flow"],
+            "CapEx (Mdr)":                ["Capital Expenditure"],
+            "Fritt kassaflöde (Mdr)":     ["Free Cash Flow"],
+            "D&A (Mdr)":                  ["Depreciation And Amortization"],
+            "Förändring rörelsekapital":  ["Change In Working Capital"],
+        }
+        tbl_cf = build_report_table(qcf, cf_rows)
+        if tbl_cf is not None:
+            st.dataframe(tbl_cf, use_container_width=True)
 
-        if not fin["cashflow"].empty:
-            fig_cf = chart_hist_financials(
-                fin["cashflow"],
-                ["Operating Cash Flow","Free Cash Flow","Capital Expenditure"],
-                "Kassaflöde (Mdr SEK)"
-            )
-            if fig_cf:
-                st.plotly_chart(fig_cf, use_container_width=True)
+        # ── SEKTION 4: Årsdata ────────────────────────────────────────────────
+        st.divider()
+        st.subheader("📅 Årsvis historik")
+
+        if not ai.empty:
+            ann_rows = {
+                "Intäkter (Mdr)":        ["Total Revenue","Operating Revenue"],
+                "Bruttoresultat (Mdr)":  ["Gross Profit"],
+                "EBITDA (Mdr)":          ["EBITDA","Normalized EBITDA"],
+                "Rörelseresultat (Mdr)": ["Operating Income"],
+                "Nettoresultat (Mdr)":   ["Net Income"],
+                "F&U (Mdr)":             ["Research And Development"],
+            }
+            ann_cols  = ai.columns[:5]
+            ann_lbls  = [str(c.year) for c in ann_cols]
+            ann_data  = {}
+            for label, keys in ann_rows.items():
+                s = _row(ai, *keys)
+                if s is not None:
+                    ann_data[label] = [f"{float(s.iloc[i])/1e9:,.2f}" if i < len(s) and pd.notna(s.iloc[i]) else "—" for i in range(len(ann_cols))]
+            if ann_data:
+                tbl_ann = pd.DataFrame(ann_data, index=ann_lbls).T
+                st.dataframe(tbl_ann, use_container_width=True)
+
+                plot_rows_ann = [k for k in ["Intäkter (Mdr)","Rörelseresultat (Mdr)","Nettoresultat (Mdr)"] if k in tbl_ann.index]
+                if plot_rows_ann:
+                    pann = tbl_ann.loc[plot_rows_ann].replace("—", None)
+                    for col in pann.columns:
+                        pann[col] = pd.to_numeric(pann[col].astype(str).str.replace(",",""), errors="coerce")
+                    fig_ann = px.bar(pann.T, barmode="group", title="Årsresultat (Mdr)",
+                        color_discrete_sequence=["#40c4ff","#ffd54f","#ff6d00"])
+                    fig_ann.update_layout(yaxis_title="Mdr", **_DARK)
+                    st.plotly_chart(fig_ann, use_container_width=True)
+
+        if not acf.empty:
+            cf_rows_ann = {
+                "Operativt CF (Mdr)":  ["Operating Cash Flow"],
+                "CapEx (Mdr)":         ["Capital Expenditure"],
+                "Fritt CF (Mdr)":      ["Free Cash Flow"],
+            }
+            ann_cf_cols = acf.columns[:5]
+            ann_cf_lbls = [str(c.year) for c in ann_cf_cols]
+            ann_cf_data = {}
+            for label, keys in cf_rows_ann.items():
+                s = _row(acf, *keys)
+                if s is not None:
+                    ann_cf_data[label] = [f"{float(s.iloc[i])/1e9:,.2f}" if i < len(s) and pd.notna(s.iloc[i]) else "—" for i in range(len(ann_cf_cols))]
+            if ann_cf_data:
+                tbl_cf_ann = pd.DataFrame(ann_cf_data, index=ann_cf_lbls).T
+                st.dataframe(tbl_cf_ann, use_container_width=True)
 
     # ═════════════════════════════════════════════════════════════════════════
     # TAB 3 — DCF
