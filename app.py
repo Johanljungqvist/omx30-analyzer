@@ -727,9 +727,10 @@ _DARK = dict(template="plotly_dark",
              plot_bgcolor="#0D0D15",
              font=dict(family="Inter, system-ui, sans-serif", color="#C8C8D8", size=12),
              title_font=dict(family="Inter, system-ui, sans-serif", color="#FFFFFF", size=14),
-             legend=dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)"),
              xaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"),
              yaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"))
+
+_LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
 
 def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Figure:
@@ -795,8 +796,7 @@ def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Fig
         line=dict(color="#ff6d00", width=1.5)), 4, 1)
 
     fig.update_layout(height=820, xaxis_rangeslider_visible=False,
-        legend=dict(bgcolor="rgba(0,0,0,.5)", bordercolor="#333"),
-        **_DARK)
+        legend=_LEGEND, **_DARK)
     return fig
 
 
