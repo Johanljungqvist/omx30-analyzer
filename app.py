@@ -146,28 +146,83 @@ def fetch_info(ticker: str) -> dict:
 def calc_beta_omx(ticker: str) -> float:
     """Beräknar beta mot OMXS30 (^OMX) från 2 års daglig avkastning."""
     try:
-        stock = yf.Ticker(ticker).history(period="2y")["Close"].pct_change().dropna()
-        omx   = yf.Ticker("^OMX").history(period="2y")["Close"].pct_change().dropna()
+        stock  = yf.Ticker(ticker).history(period="2y")["Close"].pct_change().dropna()
+        omx    = yf.Ticker("^OMX").history(period="2y")["Close"].pct_change().dropna()
         common = stock.index.intersection(omx.index)
         if len(common) < 100:
             return float(fetch_info(ticker).get("beta") or 1.0)
         s, m = stock.loc[common].values, omx.loc[common].values
-        beta = float(np.cov(s, m)[0][1] / np.var(m))
-        return round(beta, 3)
+        return round(float(np.cov(s, m)[0][1] / np.var(m)), 3)
     except Exception:
         return float(fetch_info(ticker).get("beta") or 1.0)
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_fx_rate(pair: str) -> float:
+    """Hämtar valutakurs, t.ex. 'EURSEK=X' eller 'USDSEK=X'."""
+    try:
+        return float(yf.Ticker(pair).fast_info.last_price)
+    except Exception:
+        return {"EURSEK=X": 11.0, "USDSEK=X": 10.5}.get(pair, 1.0)
+
+
+def get_corrected_pb(info: dict) -> float | None:
+    """
+    Korrigerar P/B när financial_currency ≠ trading_currency (SEK).
+    Nordea (EUR), AstraZeneca/ABB/Autoliv (USD) rapporterar bookValue i
+    sin redovisningsvaluta medan currentPrice är i SEK — kräver konvertering.
+    """
+    pb_raw  = info.get("priceToBook")
+    fin_cur = info.get("financialCurrency", "SEK")
+    cur     = info.get("currency", "SEK")
+
+    if fin_cur == cur or fin_cur == "SEK" or not pb_raw:
+        return float(pb_raw) if pb_raw else None
+
+    price   = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+    bvps_fc = info.get("bookValue")
+    if not bvps_fc or not price:
+        return float(pb_raw)
+
+    pair   = f"{fin_cur}SEK=X"
+    fx     = fetch_fx_rate(pair)
+    bvps_sek = float(bvps_fc) * fx
+    return round(price / bvps_sek, 3) if bvps_sek > 0 else None
+
+
 def get_dividend_yield(info: dict) -> float | None:
-    """yfinance returnerar ibland dividendYield som % istället för decimal — använd trailing."""
-    v = info.get("trailingAnnualDividendYield")
-    if v and v > 0:
-        return float(v)
-    raw = info.get("dividendYield")
-    if raw and raw > 0:
-        # Om värdet är > 0.20 är det troligen fel (t.ex. 0.47 = 47%) — ignorera
-        return float(raw) if raw < 0.20 else None
+    """
+    dividendRate (i lokal valuta SEK) / currentPrice är mest tillförlitlig.
+    trailingAnnualDividendRate är ibland i USD/EUR för cross-listed bolag.
+    """
+    price = float(info.get("currentPrice") or info.get("regularMarketPrice") or 0)
+    if not price:
+        return None
+
+    dr = info.get("dividendRate")
+    if dr and float(dr) > 0 and float(dr) < price * 0.40:
+        return float(dr) / price
+
+    # Fallback: trailingAnnualDividendYield om rimligt (0.1%–25%)
+    tady = info.get("trailingAnnualDividendYield")
+    if tady and 0.001 < float(tady) < 0.25:
+        return float(tady)
+
     return None
+
+
+def most_recent_quarter_label(info: dict) -> str:
+    """Returnerar 'Q1 2026', 'Q4 2025' etc. från mostRecentQuarter timestamp."""
+    ts = info.get("mostRecentQuarter")
+    if not ts:
+        return "N/A"
+    try:
+        from datetime import datetime
+        dt = datetime.utcfromtimestamp(int(ts))
+        q  = (dt.month - 1) // 3 + 1
+        return f"Q{q} {dt.year}"
+    except Exception:
+        return "N/A"
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -824,40 +879,69 @@ def main():
     # TAB 2 — FUNDAMENTAL ANALYS
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[1]:
+        # ── Senaste rapport-banner ────────────────────────────────────────────
+        mrq      = most_recent_quarter_label(info)
+        fin_cur  = info.get("financialCurrency", "SEK")
+        cur_note = f" · Redovisningsvaluta: {fin_cur}" if fin_cur != "SEK" else ""
+        st.info(f"📄 **Senaste rapport: {mrq}** · Data: TTM / senaste bokslut{cur_note} · Källa: Yahoo Finance")
+
+        pb_corr = get_corrected_pb(info)
+
         f1, f2, f3 = st.columns(3)
 
         with f1:
             st.subheader("Värderingsmultiplar")
+            # Sanity-check: forward P/E > 200 är sannolikt fel i yfinance
+            fpe = info.get("forwardPE")
+            fpe_val = fmt_num(fpe) if fpe and fpe < 200 else "N/A"
+            pb_note = " ⚠️" if fin_cur != "SEK" and info.get("priceToBook") != pb_corr else ""
             data = {
-                "P/E (trailing)":   fmt_num(info.get("trailingPE")),
-                "P/E (forward)":    fmt_num(info.get("forwardPE")),
-                "PEG":              fmt_num(info.get("pegRatio")),
-                "P/B":              fmt_num(info.get("priceToBook")),
-                "P/S (TTM)":        fmt_num(info.get("priceToSalesTrailingTwelveMonths")),
-                "EV/EBITDA":        fmt_num(info.get("enterpriseToEbitda")),
-                "EV/Revenue":       fmt_num(info.get("enterpriseToRevenue")),
-                "Enterprise Value": fmt_big(info.get("enterpriseValue")),
+                "P/E (trailing, TTM)":   fmt_num(info.get("trailingPE")),
+                "P/E (forward)":         fpe_val,
+                "PEG":                   fmt_num(info.get("pegRatio")),
+                f"P/B (korrekt{pb_note})": fmt_num(pb_corr),
+                "P/S (TTM)":             fmt_num(info.get("priceToSalesTrailingTwelveMonths")),
+                "EV/EBITDA":             fmt_num(info.get("enterpriseToEbitda")),
+                "EV/Revenue":            fmt_num(info.get("enterpriseToRevenue")),
+                "Enterprise Value":      fmt_big(info.get("enterpriseValue")),
             }
             for k, v in data.items():
                 st.metric(k, v)
+            if fin_cur != "SEK":
+                st.caption(f"⚠️ P/B korrigerat från {fin_cur}→SEK via valutakurs")
 
         with f2:
-            st.subheader("Lönsamhet")
+            st.subheader(f"Lönsamhet ({mrq} / TTM)")
+            # Hämta senaste kvartal direkt från quarterly income stmt
+            q_rev = q_ni = q_oi = None
+            if not fin["q_income"].empty:
+                qi = fin["q_income"]
+                try:
+                    latest_col = qi.columns[0]
+                    q_rev = qi.loc["Total Revenue",   latest_col] if "Total Revenue"   in qi.index else None
+                    q_oi  = qi.loc["Operating Income",latest_col] if "Operating Income" in qi.index else None
+                    q_ni  = qi.loc["Net Income",      latest_col] if "Net Income"       in qi.index else None
+                except Exception:
+                    pass
+
             prof = {
-                "Bruttomarginal":     fmt_pct(info.get("grossMargins")),
-                "Rörelsemarginal":    fmt_pct(info.get("operatingMargins")),
-                "Nettomarginal":      fmt_pct(info.get("profitMargins")),
-                "ROE":                fmt_pct(info.get("returnOnEquity")),
-                "ROA":                fmt_pct(info.get("returnOnAssets")),
-                "EBITDA":             fmt_big(info.get("ebitda")),
-                "Intäkter (TTM)":     fmt_big(info.get("totalRevenue")),
-                "Nettoresultat":      fmt_big(info.get("netIncomeToCommon")),
+                f"Intäkter ({mrq})":     fmt_big(q_rev) if q_rev is not None else "N/A",
+                f"Rörelseres. ({mrq})":  fmt_big(q_oi)  if q_oi  is not None else "N/A",
+                f"Nettores. ({mrq})":    fmt_big(q_ni)  if q_ni  is not None else "N/A",
+                "Intäkter (TTM)":        fmt_big(info.get("totalRevenue")),
+                "Bruttomarginal":        fmt_pct(info.get("grossMargins")),
+                "Rörelsemarginal":       fmt_pct(info.get("operatingMargins")),
+                "Nettomarginal":         fmt_pct(info.get("profitMargins")),
+                "ROE":                   fmt_pct(info.get("returnOnEquity")),
+                "ROA":                   fmt_pct(info.get("returnOnAssets")),
+                "EBITDA (TTM)":          fmt_big(info.get("ebitda")),
+                "EPS (TTM)":             fmt_num(info.get("trailingEps")),
             }
             for k, v in prof.items():
                 st.metric(k, v)
 
         with f3:
-            st.subheader("Finansiell hälsa & Aktie")
+            st.subheader("Finansiell hälsa")
             health = {
                 "Skuld/EK":           fmt_num(info.get("debtToEquity")),
                 "Likviditetsgrad":    fmt_num(info.get("currentRatio")),
@@ -875,13 +959,15 @@ def main():
         f4, f5 = st.columns(2)
         with f4:
             st.subheader("Utdelning & Aktie")
+            dy     = get_dividend_yield(info)
+            dr_sek = info.get("dividendRate")
             div_data = {
-                "Direktavkastning":   fmt_pct(get_dividend_yield(info)),
+                "Direktavkastning":   fmt_pct(dy),
+                "Utdelning/aktie (SEK)": fmt_num(dr_sek),
                 "Utdelningsandel":    fmt_pct(info.get("payoutRatio")),
-                "Utdelning/aktie":    fmt_num(info.get("trailingAnnualDividendRate") or info.get("dividendRate")),
                 "Beta (vs OMXS30)":   fmt_num(beta_omx),
+                "EPS (TTM)":          fmt_num(info.get("trailingEps")),
                 "Antal aktier":       fmt_big(info.get("sharesOutstanding"), ""),
-                "Float":              fmt_big(info.get("floatShares"), ""),
                 "Blankning %":        fmt_pct(info.get("shortPercentOfFloat")),
                 "52v förändring":     fmt_pct(info.get("52WeekChange")),
             }
@@ -889,24 +975,54 @@ def main():
                 st.metric(k, v)
 
         with f5:
-            st.subheader("Insider & Analyst")
+            st.subheader("Analytiker & Insider")
+            rec = info.get("recommendationKey", "N/A")
+            rec_map = {"buy":"KÖP 🟢","strong_buy":"STARKT KÖP 🟢","hold":"HÅLL 🟡",
+                       "sell":"SÄLJ 🔴","underperform":"UNDERPERFORM 🔴"}
             analyst = {
-                "Analytiker-riktkurs":  fmt_num(info.get("targetMeanPrice")),
-                "Riktkurs Hög":         fmt_num(info.get("targetHighPrice")),
-                "Riktkurs Låg":         fmt_num(info.get("targetLowPrice")),
-                "Rekommendation":       info.get("recommendationKey", "N/A"),
-                "Antal analytiker":     fmt_num(info.get("numberOfAnalystOpinions"), 0),
-                "Insider-ägarandel":    fmt_pct(info.get("heldPercentInsiders")),
+                "Riktkurs (medel)":    fmt_num(info.get("targetMeanPrice")),
+                "Riktkurs (hög)":      fmt_num(info.get("targetHighPrice")),
+                "Riktkurs (låg)":      fmt_num(info.get("targetLowPrice")),
+                "Rekommendation":      rec_map.get(rec, rec.upper() if rec else "N/A"),
+                "Antal analytiker":    fmt_num(info.get("numberOfAnalystOpinions"), 0),
+                "Potential (medel)":   f"{(info.get('targetMeanPrice',cp)/cp-1)*100:+.1f}%" if info.get("targetMeanPrice") else "N/A",
+                "Insider-ägarandel":   fmt_pct(info.get("heldPercentInsiders")),
                 "Institutionell äg.":  fmt_pct(info.get("heldPercentInstitutions")),
-                "Kortränta":            fmt_pct(info.get("shortRatio")),
             }
             for k, v in analyst.items():
                 st.metric(k, v)
 
-        # Historiska finansiella grafer
+        # ── Kvartalsvis resultatutveckling ────────────────────────────────────
+        if not fin["q_income"].empty:
+            st.divider()
+            st.subheader("Kvartalsvis resultatutveckling (senaste 4 kvartal)")
+            qi = fin["q_income"]
+            q_rows = ["Total Revenue","Gross Profit","Operating Income","Net Income"]
+            available = [r for r in q_rows if r in qi.index]
+            if available:
+                q_data = qi.loc[available, qi.columns[:4]].copy()
+                q_data.columns = [f"Q{(c.month-1)//3+1} {c.year}" for c in q_data.columns]
+                q_data = q_data / 1e9
+                fig_q = px.bar(q_data.T, barmode="group",
+                    title="Kvartalsresultat (Mdr SEK)",
+                    color_discrete_sequence=["#40c4ff","#00e676","#ffd54f","#ff6d00"])
+                fig_q.update_layout(yaxis_title="Mdr SEK", **_DARK)
+                st.plotly_chart(fig_q, use_container_width=True)
+
+                # Tabell
+                q_fmt = q_data.copy()
+                for col in q_fmt.columns:
+                    q_fmt[col] = q_fmt[col].map(lambda x: f"{x:.2f} Mdr")
+                q_fmt.index = [r.replace("Total Revenue","Intäkter")
+                                .replace("Gross Profit","Bruttoresultat")
+                                .replace("Operating Income","Rörelseresultat")
+                                .replace("Net Income","Nettoresultat") for r in q_fmt.index]
+                st.dataframe(q_fmt, use_container_width=True)
+
+        # ── Historiska årsgrafer ──────────────────────────────────────────────
         if not fin["income"].empty:
             st.divider()
-            st.subheader("Historisk Resultaträkning")
+            st.subheader("Årsvis resultaträkning")
             fig_inc = chart_hist_financials(
                 fin["income"],
                 ["Total Revenue","Gross Profit","Operating Income","Net Income"],
