@@ -408,6 +408,17 @@ def get_corrected_pb(info: dict) -> float | None:
     return round(price / bvps_sek, 3) if bvps_sek > 0 else None
 
 
+def get_fx_multiplier(info: dict) -> float:
+    """
+    Returnerar valutaomräkningsfaktor för finansiella rapportvärden → SEK.
+    Nordea=EUR, ABB/AZN/Autoliv=USD, övriga=SEK (faktor 1.0).
+    """
+    fin_cur = info.get("financialCurrency", "SEK")
+    if fin_cur == "SEK":
+        return 1.0
+    return fetch_fx_rate(f"{fin_cur}SEK=X")
+
+
 def get_dividend_yield(info: dict) -> float | None:
     """
     dividendRate (i lokal valuta SEK) / currentPrice är mest tillförlitlig.
@@ -461,6 +472,48 @@ def fetch_financials(ticker: str) -> dict:
         "q_balance":  safe(lambda: t.quarterly_balance_sheet),
         "q_cashflow": safe(lambda: t.quarterly_cashflow),
     }
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_analyst_data(ticker: str) -> dict:
+    """Hämtar analytikermål och rekommendationer via separata yfinance-endpoints."""
+    t = _ticker(ticker)
+    result = {"targets": {}, "rec_summary": None, "rec_key": ""}
+    try:
+        at = _retry(lambda: t.analyst_price_targets)
+        if isinstance(at, dict) and at.get("mean"):
+            result["targets"] = at
+        elif hasattr(at, "to_dict"):
+            result["targets"] = at.to_dict()
+    except Exception:
+        pass
+    try:
+        rs = _retry(lambda: t.recommendations_summary)
+        if rs is not None and not rs.empty:
+            result["rec_summary"] = rs.iloc[0].to_dict()
+    except Exception:
+        pass
+    try:
+        info_rec = _retry(lambda: t.info)
+        result["rec_key"] = info_rec.get("recommendationKey", "")
+    except Exception:
+        pass
+    return result
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_dividends(ticker: str) -> float:
+    """Returnerar TTM-utdelning i lokal valuta (senaste 13 mån)."""
+    try:
+        t = _ticker(ticker)
+        divs = _retry(lambda: t.dividends)
+        if divs is None or divs.empty:
+            return 0.0
+        divs.index = pd.to_datetime(divs.index, utc=True)
+        cut = pd.Timestamp.now(tz="UTC") - pd.DateOffset(months=13)
+        return float(divs[divs.index >= cut].sum())
+    except Exception:
+        return 0.0
 
 
 def _row(df: pd.DataFrame, *keys) -> pd.Series | None:
@@ -1220,22 +1273,25 @@ def main():
         qb  = fin["q_balance"]
         qcf = fin["q_cashflow"]
         ai  = fin["income"]
-        ab  = fin["balance"]
         acf = fin["cashflow"]
+
+        # Hämta analytiker- och utdelningsdata via separata endpoints
+        analyst  = fetch_analyst_data(ticker)
+        ttm_div  = fetch_dividends(ticker)
 
         mrq     = q_label(qi, 0) if not qi.empty else most_recent_quarter_label(info)
         fin_cur = info.get("financialCurrency", "SEK")
+        fx      = get_fx_multiplier(info)   # 1.0 för SEK-bolag, ~11 för EUR, ~10.5 för USD
         pb_corr = get_corrected_pb(info)
-        dy      = get_dividend_yield(info)
-        rec     = info.get("recommendationKey", "")
         rec_map = {"buy":"KÖP 🟢","strong_buy":"STARKT KÖP 🟢","hold":"HÅLL 🟡",
                    "sell":"SÄLJ 🔴","underperform":"UNDERPERFORM 🔴","neutral":"NEUTRAL 🟡"}
 
+        # Utdelning från faktisk historik
+        dy = ttm_div / cp if (ttm_div and cp) else get_dividend_yield(info)
+
         # Banner
-        cur_note = f"  |  Redovisningsvaluta: **{fin_cur}**" if fin_cur != "SEK" else ""
+        cur_note = f"  |  Redovisningsvaluta: **{fin_cur}** (omräknat ×{fx:.2f} → SEK)" if fin_cur != "SEK" else ""
         st.info(f"📄 Senaste rapport: **{mrq}**  |  Källa: Yahoo Finance / Bolagets rapporter{cur_note}")
-        if fin_cur != "SEK":
-            st.caption(f"⚠️  P/B är omräknat från {fin_cur}→SEK via live valutakurs.")
 
         # ── SEKTION 1: Senaste kvartal KPIer ─────────────────────────────────
         st.subheader(f"Nyckeltal från {mrq}")
@@ -1270,11 +1326,16 @@ def main():
 
         st.divider()
 
-        # ── Beräkna TTM-värden från 4 senaste kvartal ────────────────────────
+        # ── TTM från 4 senaste kvartal, omräknat till SEK via fx ─────────────
         def _ttm(df, *keys):
             vals = [_val(df, i, *keys) for i in range(4)]
             total = sum(v for v in vals if v is not None)
-            return total if total != 0 else None
+            return (total * fx) if total != 0 else None
+
+        def _bs(df, *keys):
+            """Balansräkningsvärde omräknat till SEK."""
+            v = _val(df, 0, *keys)
+            return (v * fx) if v is not None else None
 
         ttm_ni     = _ttm(qi,  "Net Income","Net Income Common Stockholders")
         ttm_rev    = _ttm(qi,  "Total Revenue","Operating Revenue")
@@ -1286,15 +1347,16 @@ def main():
         ttm_ocf    = _ttm(qcf, "Operating Cash Flow")
         ttm_int    = _ttm(qi,  "Interest Expense Non Operating","Interest Expense")
 
-        net_debt  = _val(qb, 0, "Net Debt")
-        tot_eq    = _val(qb, 0, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
-        tot_debt  = _val(qb, 0, "Total Debt")
-        cash_q    = _val(qb, 0, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
-        tot_assets= _val(qb, 0, "Total Assets")
-        cur_assets= _val(qb, 0, "Current Assets","Total Current Assets")
-        cur_liab  = _val(qb, 0, "Current Liabilities","Total Current Liabilities")
-        inv_q     = _val(qb, 0, "Inventory")
+        net_debt  = _bs(qb, "Net Debt")
+        tot_eq    = _bs(qb, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
+        tot_debt  = _bs(qb, "Total Debt")
+        cash_q    = _bs(qb, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
+        tot_assets= _bs(qb, "Total Assets")
+        cur_assets= _bs(qb, "Current Assets","Total Current Assets")
+        cur_liab  = _bs(qb, "Current Liabilities","Total Current Liabilities")
+        inv_q     = _bs(qb, "Inventory")
         capex_q   = _val(qcf, 0, "Capital Expenditure")
+        if capex_q: capex_q *= fx
 
         # ── Aktier: info → fast_info → balansräkning ─────────────────────────
         shares_bs = _val(qb, 0, "Ordinary Shares Number","Share Issued")
@@ -1437,27 +1499,51 @@ def main():
 
         with c4:
             st.subheader("💰 Utdelning & Analytiker")
-            n_analysts = info.get("numberOfAnalystOpinions")
-            tgt_low    = info.get("targetLowPrice")
-            tgt_high   = info.get("targetHighPrice")
-            tgt_mean   = info.get("targetMeanPrice")
-            tgt_med    = info.get("targetMedianPrice")
+            # Analytikermål — från fetch_analyst_data (separat endpoint)
+            at       = analyst.get("targets", {})
+            tgt_mean = at.get("mean") or info.get("targetMeanPrice")
+            tgt_med  = at.get("median") or info.get("targetMedianPrice")
+            tgt_low  = at.get("low")  or info.get("targetLowPrice")
+            tgt_high = at.get("high") or info.get("targetHighPrice")
+            rec_key  = analyst.get("rec_key") or info.get("recommendationKey","")
+            # Rekommendationsfördelning
+            rs = analyst.get("rec_summary") or {}
+            n_buy  = (rs.get("strongBuy",0) or 0) + (rs.get("buy",0) or 0)
+            n_hold = rs.get("hold",0) or 0
+            n_sell = (rs.get("sell",0) or 0) + (rs.get("strongSell",0) or 0)
+            n_tot  = n_buy + n_hold + n_sell
+            rec_dist = f"🟢{n_buy} 🟡{n_hold} 🔴{n_sell}" if n_tot > 0 else "N/A"
+            # Utdelning
+            eps_val = eps_ttm or info.get("trailingEps")
+            payout  = (ttm_div / (eps_val * shares) * 100) if (ttm_div and eps_val and shares > 1 and eps_val > 0) else None
+            payout_str = f"{payout:.1f}%" if payout else fmt_pct(info.get("payoutRatio"))
+            ex_div = info.get("exDividendDate")
+            if ex_div:
+                try:
+                    ex_div_str = datetime.utcfromtimestamp(int(ex_div)).strftime("%Y-%m-%d")
+                except Exception:
+                    ex_div_str = str(ex_div)[:10]
+            else:
+                ex_div_str = "N/A"
+
             items = {
                 "Direktavkastning":    fmt_pct(dy),
-                "Utdelning/aktie":     fmt_num(info.get("dividendRate")),
-                "Utdelningsandel":     fmt_pct(info.get("payoutRatio")),
-                "Ex-utdelningsdatum":  str(info.get("exDividendDate","N/A"))[:10] if info.get("exDividendDate") else "N/A",
+                "Utdelning/aktie":     fmt_num(ttm_div) if ttm_div else fmt_num(info.get("dividendRate")),
+                "Utdelningsandel":     payout_str,
+                "Ex-utdelningsdatum":  ex_div_str,
+                "5å snitt dir.avk.":   fmt_pct(info.get("fiveYearAvgDividendYield",0)/100 if info.get("fiveYearAvgDividendYield") else None),
                 "Beta (vs OMXS30)":    fmt_num(beta_omx),
-                "Antal aktier":        fmt_big(info.get("sharesOutstanding"), ""),
+                "Antal aktier":        fmt_big(shares),
                 "Insiderägande":       fmt_pct(info.get("heldPercentInsiders")),
                 "Institutionellt äg.": fmt_pct(info.get("heldPercentInstitutions")),
                 "52v förändring":      fmt_pct(info.get("52WeekChange")),
                 "Riktkurs (medel)":    fmt_num(tgt_mean),
                 "Riktkurs (median)":   fmt_num(tgt_med),
                 "Riktkurs (låg/hög)":  f"{fmt_num(tgt_low)} / {fmt_num(tgt_high)}" if tgt_low and tgt_high else "N/A",
-                "Riktkurs potential":  f"{(tgt_mean/cp-1)*100:+.1f}%" if tgt_mean else "N/A",
-                "Rekommendation":      rec_map.get(rec, rec.upper() if rec else "N/A"),
-                f"Antal analytiker":   str(n_analysts) if n_analysts else "N/A",
+                "Uppside mot riktkurs":f"{(tgt_mean/cp-1)*100:+.1f}%" if tgt_mean and cp else "N/A",
+                "Rekommendation":      rec_map.get(rec_key, rec_key.upper() if rec_key else "N/A"),
+                "Fördelning (K/H/S)":  rec_dist,
+                "Antal analytiker":    str(n_tot) if n_tot else "N/A",
             }
             for k, v in items.items(): st.metric(k, v)
 
