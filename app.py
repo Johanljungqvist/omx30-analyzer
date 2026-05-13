@@ -2,6 +2,7 @@
 OMX30 Analyzer — Teknisk, Fundamental, DCF & Monte Carlo
 Kurs uppdateras automatiskt varje timme via Streamlit cache.
 """
+from __future__ import annotations
 
 import streamlit as st
 import yfinance as yf
@@ -123,12 +124,49 @@ def fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=300, show_spinner=False)   # 5 min för realtidspris
+def fetch_realtime_price(ticker: str) -> float | None:
+    try:
+        fi = yf.Ticker(ticker).fast_info
+        return float(fi.last_price)
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_info(ticker: str) -> dict:
     try:
         return yf.Ticker(ticker).info or {}
     except Exception:
         return {}
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def calc_beta_omx(ticker: str) -> float:
+    """Beräknar beta mot OMXS30 (^OMX) från 2 års daglig avkastning."""
+    try:
+        stock = yf.Ticker(ticker).history(period="2y")["Close"].pct_change().dropna()
+        omx   = yf.Ticker("^OMX").history(period="2y")["Close"].pct_change().dropna()
+        common = stock.index.intersection(omx.index)
+        if len(common) < 100:
+            return float(fetch_info(ticker).get("beta") or 1.0)
+        s, m = stock.loc[common].values, omx.loc[common].values
+        beta = float(np.cov(s, m)[0][1] / np.var(m))
+        return round(beta, 3)
+    except Exception:
+        return float(fetch_info(ticker).get("beta") or 1.0)
+
+
+def get_dividend_yield(info: dict) -> float | None:
+    """yfinance returnerar ibland dividendYield som % istället för decimal — använd trailing."""
+    v = info.get("trailingAnnualDividendYield")
+    if v and v > 0:
+        return float(v)
+    raw = info.get("dividendYield")
+    if raw and raw > 0:
+        # Om värdet är > 0.20 är det troligen fel (t.ex. 0.47 = 47%) — ignorera
+        return float(raw) if raw < 0.20 else None
+    return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -318,9 +356,10 @@ def dcf_valuation(
         eg = info.get("earningsGrowth") or 0.05
         growth_rate = float(np.clip((rg + eg) / 2, 0.01, 0.30))
 
-    # WACC
+    # WACC — beta beräknas mot OMXS30 (inte S&P 500)
     if wacc is None:
-        beta      = float(info.get("beta") or 1.0)
+        ticker_sym = info.get("symbol", "")
+        beta      = calc_beta_omx(ticker_sym) if ticker_sym else float(info.get("beta") or 1.0)
         rf        = 0.038
         erp       = 0.055
         ke        = rf + beta * erp
@@ -423,7 +462,7 @@ def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Fig
         x=df.index, open=df["Open"], high=df["High"],
         low=df["Low"], close=c, name="Kurs",
         increasing_line_color="#00e676", decreasing_line_color="#ff1744",
-        increasing_fillcolor="#00e67644", decreasing_fillcolor="#ff174444",
+        increasing_fillcolor="rgba(0,230,118,0.27)", decreasing_fillcolor="rgba(255,23,68,0.27)",
     ), 1, 1)
 
     colors_map = {"SMA 20":"#ffd54f","SMA 50":"#40c4ff","SMA 200":"#ea80fc","EMA 20":"#69f0ae"}
@@ -629,16 +668,21 @@ def main():
         df   = fetch_history(ticker, period)
         info = fetch_info(ticker)
         fin  = fetch_financials(ticker)
+        beta_omx = calc_beta_omx(ticker)
 
     if df is None or df.empty:
         st.error(f"Kunde inte hämta data för {ticker}.")
         return
 
     # ── HEADER ───────────────────────────────────────────────────────────────
-    cp   = float(df["Close"].iloc[-1])
-    prev = float(df["Close"].iloc[-2]) if len(df) > 1 else cp
+    # Realtidspris (5 min cache) — fallback till historik
+    rt_price = fetch_realtime_price(ticker)
+    cp   = rt_price if rt_price else float(df["Close"].iloc[-1])
+    prev = float(df["Close"].iloc[-1]) if rt_price else (float(df["Close"].iloc[-2]) if len(df) > 1 else cp)
+    if rt_price:
+        prev = float(info.get("previousClose") or df["Close"].iloc[-1])
     chg  = cp - prev
-    pchg = chg / prev * 100
+    pchg = chg / prev * 100 if prev else 0
 
     col_h1, col_h2 = st.columns([4, 1])
     with col_h1:
@@ -802,10 +846,10 @@ def main():
         with f4:
             st.subheader("Utdelning & Aktie")
             div_data = {
-                "Direktavkastning":   fmt_pct(info.get("dividendYield")),
+                "Direktavkastning":   fmt_pct(get_dividend_yield(info)),
                 "Utdelningsandel":    fmt_pct(info.get("payoutRatio")),
-                "Utdelning/aktie":    fmt_num(info.get("dividendRate")),
-                "Beta":               fmt_num(info.get("beta")),
+                "Utdelning/aktie":    fmt_num(info.get("trailingAnnualDividendRate") or info.get("dividendRate")),
+                "Beta (vs OMXS30)":   fmt_num(beta_omx),
                 "Antal aktier":       fmt_big(info.get("sharesOutstanding"), ""),
                 "Float":              fmt_big(info.get("floatShares"), ""),
                 "Blankning %":        fmt_pct(info.get("shortPercentOfFloat")),
@@ -1209,8 +1253,8 @@ def main():
                                 "ROE (%)":        round((inf.get("returnOnEquity") or 0)*100, 2),
                                 "Nettomarginal (%)": round((inf.get("profitMargins") or 0)*100, 2),
                                 "Tillväxt (%)":   round((inf.get("revenueGrowth") or 0)*100, 2),
-                                "Beta":           inf.get("beta"),
-                                "Utdelning (%)":  round((inf.get("dividendYield") or 0)*100, 2),
+                                "Beta (OMXS30)":  calc_beta_omx(t),
+                                "Utdelning (%)":  round((get_dividend_yield(inf) or 0)*100, 2),
                                 "Börsvärde":      inf.get("marketCap"),
                             })
                         except Exception as e:
