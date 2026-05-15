@@ -49,7 +49,7 @@ def _retry(fn, retries: int = 4, base_delay: float = 5.0):
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="OMX30 Analyzer Pro",
-    page_icon="📈",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -73,17 +73,17 @@ html, body, .stApp, [class*="css"] {
 /* ── Sidebar ── */
 section[data-testid="stSidebar"] {
     background-color: #0C0C14;
-    border-right: 1px solid rgba(255,255,255,0.06);
+    border-right: 1px solid rgba(255,255,255,0.07);
 }
 section[data-testid="stSidebar"] * { font-size: 13px; }
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
-    font-size: 11px !important;
+    font-size: 10px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.12em !important;
+    letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
-    color: #666680 !important;
+    color: #55556A !important;
     margin-top: 1.4rem !important;
 }
 
@@ -91,82 +91,88 @@ section[data-testid="stSidebar"] h3 {
 div[data-testid="metric-container"] {
     background: #0F0F18;
     border: 1px solid rgba(255,255,255,0.07);
-    border-radius: 8px;
+    border-radius: 0;
     padding: 14px 16px;
-    transition: border-color 0.2s;
+    transition: border-color 0.15s;
 }
 div[data-testid="metric-container"]:hover {
-    border-color: rgba(255,255,255,0.16);
+    border-color: rgba(255,255,255,0.18);
 }
 div[data-testid="metric-container"] label {
-    font-size: 11px !important;
-    font-weight: 500 !important;
-    letter-spacing: 0.04em !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.10em !important;
     text-transform: uppercase !important;
-    color: #666680 !important;
+    color: #55556A !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
     font-size: 18px !important;
     font-weight: 600 !important;
     color: #EEEEF6 !important;
-    letter-spacing: -0.01em !important;
+    letter-spacing: -0.02em !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
-    font-size: 12px !important;
+    font-size: 11px !important;
     font-weight: 500 !important;
 }
 
 /* ── Headings ── */
-h1 { font-size: 22px !important; font-weight: 700 !important;
+h1 { font-size: 20px !important; font-weight: 700 !important;
      color: #FFFFFF !important; letter-spacing: -0.02em !important; }
-h2 { font-size: 15px !important; font-weight: 600 !important;
-     color: #FFFFFF !important; letter-spacing: -0.01em !important;
+h2 { font-size: 14px !important; font-weight: 600 !important;
+     color: #FFFFFF !important; letter-spacing: 0.01em !important;
      border-bottom: 1px solid rgba(255,255,255,0.07);
-     padding-bottom: 8px; margin-top: 1.5rem !important; }
-h3 { font-size: 13px !important; font-weight: 600 !important;
-     color: #A0A0C0 !important; letter-spacing: 0.02em !important;
+     padding-bottom: 8px; margin-top: 1.6rem !important; }
+h3 { font-size: 11px !important; font-weight: 600 !important;
+     color: #808099 !important; letter-spacing: 0.10em !important;
      text-transform: uppercase !important; }
 
 /* ── Tabs ── */
 div[data-baseweb="tab-list"] {
     background: #0C0C14 !important;
-    border-radius: 8px;
-    padding: 4px;
-    gap: 2px;
-    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 0 !important;
+    padding: 0;
+    gap: 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
 }
 button[data-baseweb="tab"] {
-    font-size: 13px !important;
+    font-size: 12px !important;
     font-weight: 500 !important;
-    color: #666680 !important;
-    border-radius: 6px !important;
-    padding: 8px 18px !important;
-    letter-spacing: 0.01em !important;
-    transition: all 0.15s !important;
+    color: #55556A !important;
+    border-radius: 0 !important;
+    padding: 10px 20px !important;
+    letter-spacing: 0.04em !important;
+    text-transform: uppercase !important;
+    border-bottom: 2px solid transparent !important;
+    transition: color 0.12s !important;
 }
-button[data-baseweb="tab"]:hover { color: #FFFFFF !important; }
+button[data-baseweb="tab"]:hover { color: #C0C0D8 !important; }
 button[data-baseweb="tab"][aria-selected="true"] {
-    background: #1A1A28 !important;
+    background: transparent !important;
     color: #FFFFFF !important;
     font-weight: 600 !important;
+    border-bottom: 2px solid #FFFFFF !important;
 }
 
 /* ── Divider ── */
-hr { border: none; border-top: 1px solid rgba(255,255,255,0.06) !important; margin: 1.5rem 0 !important; }
+hr { border: none; border-top: 1px solid rgba(255,255,255,0.07) !important; margin: 1.6rem 0 !important; }
 
 /* ── Signal badges ── */
-.badge-buy  { background: rgba(34,197,94,0.15); color: #22C55E;
-              border: 1px solid rgba(34,197,94,0.3);
-              padding: 3px 12px; border-radius: 4px;
-              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
-.badge-sell { background: rgba(239,68,68,0.15); color: #EF4444;
-              border: 1px solid rgba(239,68,68,0.3);
-              padding: 3px 12px; border-radius: 4px;
-              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
-.badge-neu  { background: rgba(234,179,8,0.12); color: #EAB308;
-              border: 1px solid rgba(234,179,8,0.25);
-              padding: 3px 12px; border-radius: 4px;
-              font-weight: 600; font-size: 12px; letter-spacing: 0.05em; }
+.badge-buy  { background: rgba(34,197,94,0.10); color: #22C55E;
+              border: 1px solid rgba(34,197,94,0.25);
+              padding: 2px 10px; border-radius: 0;
+              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
+              text-transform: uppercase; }
+.badge-sell { background: rgba(239,68,68,0.10); color: #EF4444;
+              border: 1px solid rgba(239,68,68,0.25);
+              padding: 2px 10px; border-radius: 0;
+              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
+              text-transform: uppercase; }
+.badge-neu  { background: rgba(148,163,184,0.08); color: #94A3B8;
+              border: 1px solid rgba(148,163,184,0.20);
+              padding: 2px 10px; border-radius: 0;
+              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
+              text-transform: uppercase; }
 
 /* ── Color helpers ── */
 .pos { color: #22C55E; font-weight: 600; }
@@ -175,41 +181,43 @@ hr { border: none; border-top: 1px solid rgba(255,255,255,0.06) !important; marg
 
 /* ── Admin banner ── */
 .admin-banner {
-    background: rgba(239,68,68,0.06);
-    border: 1px solid rgba(239,68,68,0.25);
-    border-radius: 6px;
+    background: rgba(239,68,68,0.05);
+    border: 1px solid rgba(239,68,68,0.22);
+    border-radius: 0;
     padding: 8px 14px;
     color: #EF4444;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
 }
 
 /* ── Dataframes ── */
-div[data-testid="stDataFrame"] { border-radius: 8px; overflow: hidden; }
+div[data-testid="stDataFrame"] { border-radius: 0; overflow: hidden; }
 div[data-testid="stDataFrame"] th {
     background: #0F0F18 !important;
-    color: #666680 !important;
-    font-size: 11px !important;
+    color: #55556A !important;
+    font-size: 10px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.06em !important;
+    letter-spacing: 0.08em !important;
     text-transform: uppercase !important;
 }
 
 /* ── Buttons ── */
 div[data-testid="stButton"] button {
-    background: #1A1A28;
-    border: 1px solid rgba(255,255,255,0.1);
-    color: #EEEEF6;
-    font-size: 13px;
+    background: #111119;
+    border: 1px solid rgba(255,255,255,0.10);
+    color: #D0D0E0;
+    font-size: 12px;
     font-weight: 500;
-    border-radius: 6px;
-    transition: all 0.15s;
+    border-radius: 0;
+    letter-spacing: 0.04em;
+    transition: all 0.12s;
 }
 div[data-testid="stButton"] button:hover {
-    background: #222235;
-    border-color: rgba(255,255,255,0.2);
+    background: #1A1A26;
+    border-color: rgba(255,255,255,0.22);
+    color: #FFFFFF;
 }
 
 /* ── Inputs / Selects ── */
@@ -217,21 +225,30 @@ div[data-testid="stSelectbox"] > div,
 div[data-testid="stMultiSelect"] > div {
     background: #0F0F18;
     border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px;
+    border-radius: 0;
 }
 
 /* ── Info / Warning ── */
 div[data-testid="stAlert"] {
-    border-radius: 6px;
-    border-left-width: 3px;
+    border-radius: 0;
+    border-left-width: 2px;
     font-size: 13px;
 }
 
 /* ── Caption / small text ── */
 .stCaption, small, caption {
-    color: #555570 !important;
+    color: #44445A !important;
     font-size: 11px !important;
 }
+
+/* ── Expander ── */
+div[data-testid="stExpander"] {
+    border: 1px solid rgba(255,255,255,0.07) !important;
+    border-radius: 0 !important;
+}
+
+/* ── Slider / Radio ── */
+div[data-testid="stSlider"] > div { border-radius: 0 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1098,13 +1115,13 @@ def main():
 
     # ── SIDEBAR ──────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("## 📈 OMX30 Analyzer Pro")
-        st.caption(f"⏱ Senast uppdaterad: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        st.markdown("## OMX30 Analyzer Pro")
+        st.caption(f"Senast uppdaterad: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
 
         refresh_opt = st.radio(
             "Kursuppdatering",
             options=[60, 300],
-            format_func=lambda x: "⚡ Var 1 minut" if x == 60 else "🕐 Var 5 minuter",
+            format_func=lambda x: "Var 1 minut" if x == 60 else "Var 5 minuter",
             horizontal=True,
             index=0 if st.session_state.refresh_interval == 60 else 1,
         )
@@ -1112,7 +1129,7 @@ def main():
             st.session_state.refresh_interval = refresh_opt
             st.rerun()
 
-        st.caption(f"🔄 Uppdatering #{refresh_count} &nbsp;|&nbsp; Intervall: {refresh_opt}s")
+        st.caption(f"Uppdatering #{refresh_count} &nbsp;|&nbsp; Intervall: {refresh_opt}s")
         st.divider()
 
         selected = st.selectbox("Välj aktie", list(OMX30.keys()),
@@ -1129,30 +1146,30 @@ def main():
         st.divider()
         col_btn1, col_btn2 = st.columns(2)
         with col_btn1:
-            if st.button("🔄 Rensa cache", use_container_width=True):
+            if st.button("Rensa cache", use_container_width=True):
                 st.cache_data.clear()
                 st.rerun()
         with col_btn2:
-            if st.button("▶ Uppdatera nu", use_container_width=True):
+            if st.button("Uppdatera nu", use_container_width=True):
                 st.rerun()
 
         st.divider()
 
         # ── BACKDOOR ENTRY ────────────────────────────────────────────────
-        with st.expander("⚙️ Avancerade inställningar", expanded=False):
+        with st.expander("Avancerade inställningar", expanded=False):
             st.caption("Systemkonfiguration")
             key = st.text_input("Åtkomstkod", type="password",
                                 placeholder="●●●●●●●●●●●●●●●●")
             if key == "OMXPRO-BACKDOOR-2024":
                 st.session_state.admin = True
-                st.success("✅ Fullständig åtkomst aktiverad")
+                st.success("Fullständig åtkomst aktiverad")
             elif key and key != "OMXPRO-BACKDOOR-2024":
                 st.error("Ogiltig kod")
                 st.session_state.admin = False
 
         if st.session_state.admin:
             st.markdown(
-                '<div class="admin-banner">🔓 ADMIN-LÄGE AKTIVT<br>'
+                '<div class="admin-banner">ADMIN-LÄGE AKTIVT<br>'
                 'Fullständig systemåtkomst</div>',
                 unsafe_allow_html=True)
 
@@ -1167,13 +1184,12 @@ def main():
         name = type(exc).__name__
         if "RateLimit" in name or "rate" in str(exc).lower():
             st.warning(
-                "⏳ **Yahoo Finance begränsar tillfälligt anropen** (rate limit). "
-                "Vänta 30 sekunder och tryck sedan på knappen nedan.",
-                icon="⚠️"
+                "Yahoo Finance begränsar tillfälligt anropen (rate limit). "
+                "Vänta 30 sekunder och tryck sedan på knappen nedan."
             )
         else:
             st.error(f"Fel vid datahämtning: {exc}")
-        if st.button("🔄 Försök igen"):
+        if st.button("Försök igen"):
             st.cache_data.clear()
             st.rerun()
         st.stop()
@@ -1183,7 +1199,7 @@ def main():
             f"Ingen kursdata för **{ticker}**. "
             "Yahoo Finance kan vara tillfälligt otillgängligt — försök om en stund."
         )
-        if st.button("🔄 Försök igen"):
+        if st.button("Försök igen"):
             st.cache_data.clear()
             st.rerun()
         st.stop()
@@ -1210,10 +1226,10 @@ def main():
         interval_label = "1 min" if st.session_state.refresh_interval == 60 else "5 min"
         st.caption(f"Ticker: **{ticker}** &nbsp;|&nbsp; Börs: Nasdaq Stockholm &nbsp;|&nbsp; "
                    f"Valuta: SEK &nbsp;|&nbsp; Sektor: {info.get('sector','N/A')} &nbsp;|&nbsp; "
-                   f"🔄 Live-kurs uppdateras var {interval_label}")
+                   f"Live-kurs uppdateras var {interval_label}")
     with col_h2:
         if st.session_state.admin:
-            st.markdown('<div class="admin-banner" style="text-align:center">🔓 ADMIN</div>',
+            st.markdown('<div class="admin-banner" style="text-align:center">ADMIN</div>',
                         unsafe_allow_html=True)
 
     # ── QUICK METRICS ─────────────────────────────────────────────────────────
@@ -1246,14 +1262,14 @@ def main():
 
     # ── TABS ──────────────────────────────────────────────────────────────────
     tab_labels = [
-        "📊 Teknisk analys",
-        "📋 Fundamental analys",
-        "💰 DCF Värdering",
-        "🎲 Monte Carlo",
-        "🔍 OMX30 Screener",
+        "Teknisk analys",
+        "Fundamental analys",
+        "DCF Värdering",
+        "Monte Carlo",
+        "OMX30 Screener",
     ]
     if st.session_state.admin:
-        tab_labels.append("🔓 Admin / Backdoor")
+        tab_labels.append("Admin")
 
     tabs = st.tabs(tab_labels)
 
@@ -1342,15 +1358,15 @@ def main():
         fin_cur = info.get("financialCurrency", "SEK")
         fx      = get_fx_multiplier(info)   # 1.0 för SEK-bolag, ~11 för EUR, ~10.5 för USD
         pb_corr = get_corrected_pb(info)
-        rec_map = {"buy":"KÖP 🟢","strong_buy":"STARKT KÖP 🟢","hold":"HÅLL 🟡",
-                   "sell":"SÄLJ 🔴","underperform":"UNDERPERFORM 🔴","neutral":"NEUTRAL 🟡"}
+        rec_map = {"buy":"KÖP","strong_buy":"STARKT KÖP","hold":"HÅLL",
+                   "sell":"SÄLJ","underperform":"UNDERPERFORM","neutral":"NEUTRAL"}
 
         # Utdelning från faktisk historik
         dy = ttm_div / cp if (ttm_div and cp) else get_dividend_yield(info)
 
         # Banner
         cur_note = f"  |  Redovisningsvaluta: **{fin_cur}** (omräknat ×{fx:.2f} → SEK)" if fin_cur != "SEK" else ""
-        st.info(f"📄 Senaste rapport: **{mrq}**  |  Källa: Yahoo Finance / Bolagets rapporter{cur_note}")
+        st.info(f"Senaste rapport: **{mrq}**  |  Källa: Yahoo Finance / Bolagets rapporter{cur_note}")
 
         # ── SEKTION 1: Senaste kvartal KPIer ─────────────────────────────────
         st.subheader(f"Nyckeltal från {mrq}")
@@ -1497,7 +1513,7 @@ def main():
         c1, c2, c3, c4 = st.columns(4)
 
         with c1:
-            st.subheader("📊 Värdering")
+            st.subheader("Värdering")
             items = {
                 "P/E (TTM)":        fmt_num(pe_v),
                 "P/E (forward)":    fmt_num(fpe) if fpe else "N/A",
@@ -1514,7 +1530,7 @@ def main():
             for k, v in items.items(): st.metric(k, v)
 
         with c2:
-            st.subheader("🏦 Finansiell hälsa")
+            st.subheader("Finansiell hälsa")
             ocf_q = _val(qcf, 0, "Operating Cash Flow")
             items = {
                 "Nettoskuld":          fmt_big(net_debt),
@@ -1533,7 +1549,7 @@ def main():
             for k, v in items.items(): st.metric(k, v)
 
         with c3:
-            st.subheader("📈 Lönsamhet & Resultat (TTM)")
+            st.subheader("Lönsamhet & Resultat (TTM)")
             items = {
                 "Intäkter (TTM)":       fmt_big(ttm_rev),
                 "Bruttoresultat (TTM)": fmt_big(ttm_gp),
@@ -1557,7 +1573,7 @@ def main():
             for k, v in items.items(): st.metric(k, v)
 
         with c4:
-            st.subheader("💰 Utdelning & Analytiker")
+            st.subheader("Utdelning & Analytiker")
             # Analytikermål — från fetch_analyst_data (separat endpoint)
             at       = analyst.get("targets", {})
             tgt_mean = at.get("mean") or info.get("targetMeanPrice")
@@ -1571,7 +1587,7 @@ def main():
             n_hold = rs.get("hold",0) or 0
             n_sell = (rs.get("sell",0) or 0) + (rs.get("strongSell",0) or 0)
             n_tot  = n_buy + n_hold + n_sell
-            rec_dist = f"🟢{n_buy} 🟡{n_hold} 🔴{n_sell}" if n_tot > 0 else "N/A"
+            rec_dist = f"Köp {n_buy}  Håll {n_hold}  Sälj {n_sell}" if n_tot > 0 else "N/A"
             # Utdelning
             eps_val = eps_ttm or info.get("trailingEps")
             payout  = (ttm_div / (eps_val * shares) * 100) if (ttm_div and eps_val and shares > 1 and eps_val > 0) else None
@@ -1608,7 +1624,7 @@ def main():
 
         # ── SEKTION 3: Kvartalsrapporter (4 senaste) ──────────────────────────
         st.divider()
-        st.subheader("📊 Kvartalsrapporter — Resultaträkning")
+        st.subheader("Kvartalsrapporter — Resultaträkning")
 
         inc_rows = {
             "Intäkter (Mdr)":         ["Total Revenue","Operating Revenue"],
@@ -1633,7 +1649,7 @@ def main():
                 fig_qi.update_layout(yaxis_title="Mdr", **_DARK)
                 st.plotly_chart(fig_qi, use_container_width=True)
 
-        st.subheader("📊 Kvartalsrapporter — Balansräkning")
+        st.subheader("Kvartalsrapporter — Balansräkning")
         bal_rows = {
             "Totala tillgångar (Mdr)": ["Total Assets"],
             "Eget kapital (Mdr)":      ["Common Stock Equity","Stockholders Equity"],
@@ -1647,7 +1663,7 @@ def main():
         if tbl_bal is not None:
             st.dataframe(tbl_bal, use_container_width=True)
 
-        st.subheader("📊 Kvartalsrapporter — Kassaflöde")
+        st.subheader("Kvartalsrapporter — Kassaflöde")
         cf_rows = {
             "Operativt kassaflöde (Mdr)": ["Operating Cash Flow"],
             "CapEx (Mdr)":                ["Capital Expenditure"],
@@ -1661,7 +1677,7 @@ def main():
 
         # ── SEKTION 4: Årsdata ────────────────────────────────────────────────
         st.divider()
-        st.subheader("📅 Årsvis historik")
+        st.subheader("Årsvis historik")
 
         if not ai.empty:
             ann_rows = {
@@ -1762,7 +1778,7 @@ def main():
                 now_ts = cached[2]
 
             calc_time = time.strftime("%H:%M:%S", time.localtime(now_ts))
-            st.caption(f"🕐 Senast beräknad: **{calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.dcf_interval_min} min**")
+            st.caption(f"Senast beräknad: **{calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.dcf_interval_min} min**")
 
             if "error" in result:
                 st.warning(result["error"])
@@ -1861,7 +1877,7 @@ def main():
                 mc_now_ts = mc_cached[2]
 
             mc_calc_time = time.strftime("%H:%M:%S", time.localtime(mc_now_ts))
-            st.caption(f"🕐 Senast beräknad: **{mc_calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.mc_interval_min} min**")
+            st.caption(f"Senast beräknad: **{mc_calc_time}** &nbsp;|&nbsp; Uppdateras var **{st.session_state.mc_interval_min} min**")
 
             st.plotly_chart(chart_mc(mc_res, selected), use_container_width=True)
 
@@ -1989,7 +2005,7 @@ def main():
             st.divider()
             col_top, col_bot = st.columns(2)
             with col_top:
-                st.subheader("🏆 Bästa 5 (3M)")
+                st.subheader("Bästa 5 (3M)")
                 st.dataframe(
                     d3m.nlargest(5).rename("3M %").reset_index()
                        .rename(columns={"index":"Aktie"})
@@ -1997,7 +2013,7 @@ def main():
                     hide_index=True, use_container_width=True
                 )
             with col_bot:
-                st.subheader("📉 Sämsta 5 (3M)")
+                st.subheader("Sämsta 5 (3M)")
                 st.dataframe(
                     d3m.nsmallest(5).rename("3M %").reset_index()
                        .rename(columns={"index":"Aktie"})
@@ -2012,15 +2028,15 @@ def main():
         with tabs[5]:
             st.markdown("""
             <div class="admin-banner">
-            🔓 <strong>ADMIN-LÄGE AKTIVT</strong> — Du har full åtkomst till rådata,
+            <strong>ADMIN-LÄGE AKTIVT</strong> — Du har full åtkomst till rådata,
             API-debug, anpassade modeller och bulk-export.
             Åtkomstkod: <code>OMXPRO-BACKDOOR-2024</code>
             </div>
             """, unsafe_allow_html=True)
 
             a_tabs = st.tabs([
-                "📦 Rådata", "🛠 API Debug", "🔧 Avancerad DCF",
-                "📤 Bulk Export", "⚡ Systemkontroll",
+                "Rådata", "API Debug", "Avancerad DCF",
+                "Bulk Export", "Systemkontroll",
             ])
 
             # ── Rådata ───────────────────────────────────────────────────────
@@ -2046,7 +2062,7 @@ def main():
                 if isinstance(raw, pd.DataFrame) and not raw.empty:
                     st.dataframe(raw, use_container_width=True, height=500)
                     csv_bytes = raw.to_csv().encode()
-                    st.download_button(f"⬇ Ladda ner {choice}.csv", csv_bytes,
+                    st.download_button(f"Ladda ner {choice}.csv", csv_bytes,
                                        f"{ticker}_{choice.split()[0]}.csv", "text/csv")
                 else:
                     st.info("Ingen data tillgänglig för detta dataset.")
@@ -2099,7 +2115,7 @@ def main():
                     if "error" in adv:
                         st.error(adv["error"])
                     else:
-                        st.success(f"✅ Intrinsiskt värde: **{adv['intrinsic_value']:.2f} SEK** "
+                        st.success(f"Intrinsiskt värde: **{adv['intrinsic_value']:.2f} SEK** "
                                    f"| Säkerhetsmarginal: **{adv['margin_of_safety']:.1f}%**")
                         st.json({k: round(v, 4) if isinstance(v, float) else v
                                  for k, v in adv.items() if k != "projected_fcf"})
@@ -2139,7 +2155,7 @@ def main():
                     bulk = pd.DataFrame(rows)
                     st.dataframe(bulk, use_container_width=True)
                     st.download_button(
-                        "⬇ Ladda ner OMX30_bulk.csv",
+                        "Ladda ner OMX30_bulk.csv",
                         bulk.to_csv(index=False).encode(),
                         "OMX30_bulk_export.csv", "text/csv"
                     )
@@ -2150,20 +2166,20 @@ def main():
                 col_s1, col_s2 = st.columns(2)
                 with col_s1:
                     st.metric("Cache TTL",            "3 600 sekunder (1 h)")
-                    st.metric("Sessionsadmin",        "Aktiv ✅")
+                    st.metric("Sessionsadmin",        "Aktiv")
                     st.metric("Datakälla",            "Yahoo Finance")
                     st.metric("Uppdateringsfrekvens", "Automatisk (1 h)")
 
                 with col_s2:
-                    if st.button("🗑 Rensa all cache", type="primary"):
+                    if st.button("Rensa all cache", type="primary"):
                         st.cache_data.clear()
-                        st.success("✅ Cache rensad — all data hämtas på nytt vid nästa anrop.")
+                        st.success("Cache rensad — all data hämtas på nytt vid nästa anrop.")
                         st.rerun()
 
-                    if st.button("🔄 Ladda om sidan"):
+                    if st.button("Ladda om sidan"):
                         st.rerun()
 
-                    if st.button("🔒 Logga ut från admin"):
+                    if st.button("Logga ut från admin"):
                         st.session_state.admin = False
                         st.rerun()
 
