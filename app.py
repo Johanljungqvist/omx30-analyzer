@@ -59,196 +59,255 @@ st.set_page_config(
 # ─────────────────────────────────────────────────────────────────────────────
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
 
-/* ── Base ── */
+/* ════════════════════════════════════════════════
+   PALETTE  — neutral black, zero color tint
+   ════════════════════════════════════════════════ */
+:root {
+    --bg:         #0C0C0C;
+    --bg2:        #111111;
+    --bg3:        #171717;
+    --bg4:        #1E1E1E;
+    --border:     rgba(255,255,255,0.08);
+    --border-hi:  rgba(255,255,255,0.15);
+    --text:       #DEDEDE;
+    --text-dim:   #909090;
+    --text-muted: #585858;
+    --text-faint: #383838;
+    --green:      #2ECC71;
+    --red:        #E05252;
+    --yellow:     #C8A020;
+}
+
 html, body, .stApp, [class*="css"] {
-    font-family: 'Inter', system-ui, -apple-system, sans-serif !important;
+    font-family: 'Inter', system-ui, sans-serif !important;
+    font-size: 13px;
 }
-.stApp {
-    background-color: #09090F;
-    color: #D0D0E0;
-}
+.stApp { background-color: var(--bg); color: var(--text); }
 
-/* ── Sidebar ── */
+/* ── Sidebar ─────────────────────────────────── */
 section[data-testid="stSidebar"] {
-    background-color: #0C0C14;
-    border-right: 1px solid rgba(255,255,255,0.07);
+    background-color: var(--bg2);
+    border-right: 1px solid var(--border);
 }
-section[data-testid="stSidebar"] * { font-size: 13px; }
+section[data-testid="stSidebar"] * { font-size: 12px; }
+
+/* sidebar section labels (h1/h2/h3 in sidebar) */
 section[data-testid="stSidebar"] h1,
 section[data-testid="stSidebar"] h2,
 section[data-testid="stSidebar"] h3 {
     font-size: 10px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.14em !important;
+    letter-spacing: 0.16em !important;
     text-transform: uppercase !important;
-    color: #55556A !important;
-    margin-top: 1.4rem !important;
+    color: var(--text-muted) !important;
+    margin-top: 1.2rem !important;
+    margin-bottom: 0.3rem !important;
 }
 
-/* ── Metric cards ── */
+/* ── Metric fields ───────────────────────────── */
 div[data-testid="metric-container"] {
-    background: #0F0F18;
-    border: 1px solid rgba(255,255,255,0.07);
+    background: transparent;
+    border: none;
+    border-top: 1px solid var(--border);
     border-radius: 0;
-    padding: 14px 16px;
-    transition: border-color 0.15s;
-}
-div[data-testid="metric-container"]:hover {
-    border-color: rgba(255,255,255,0.18);
+    padding: 10px 0 10px 0;
 }
 div[data-testid="metric-container"] label {
-    font-size: 10px !important;
+    font-size: 9px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.10em !important;
+    letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
-    color: #55556A !important;
+    color: var(--text-muted) !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricValue"] {
-    font-size: 18px !important;
-    font-weight: 600 !important;
-    color: #EEEEF6 !important;
-    letter-spacing: -0.02em !important;
+    font-size: 17px !important;
+    font-weight: 500 !important;
+    color: var(--text) !important;
+    letter-spacing: -0.01em !important;
+    font-variant-numeric: tabular-nums !important;
 }
 div[data-testid="metric-container"] [data-testid="stMetricDelta"] {
     font-size: 11px !important;
-    font-weight: 500 !important;
+    font-weight: 400 !important;
+    font-variant-numeric: tabular-nums !important;
 }
 
-/* ── Headings ── */
-h1 { font-size: 20px !important; font-weight: 700 !important;
-     color: #FFFFFF !important; letter-spacing: -0.02em !important; }
-h2 { font-size: 14px !important; font-weight: 600 !important;
-     color: #FFFFFF !important; letter-spacing: 0.01em !important;
-     border-bottom: 1px solid rgba(255,255,255,0.07);
-     padding-bottom: 8px; margin-top: 1.6rem !important; }
-h3 { font-size: 11px !important; font-weight: 600 !important;
-     color: #808099 !important; letter-spacing: 0.10em !important;
-     text-transform: uppercase !important; }
-
-/* ── Tabs ── */
-div[data-baseweb="tab-list"] {
-    background: #0C0C14 !important;
-    border-radius: 0 !important;
-    padding: 0;
-    gap: 0;
-    border-bottom: 1px solid rgba(255,255,255,0.08) !important;
-}
-button[data-baseweb="tab"] {
-    font-size: 12px !important;
-    font-weight: 500 !important;
-    color: #55556A !important;
-    border-radius: 0 !important;
-    padding: 10px 20px !important;
-    letter-spacing: 0.04em !important;
-    text-transform: uppercase !important;
-    border-bottom: 2px solid transparent !important;
-    transition: color 0.12s !important;
-}
-button[data-baseweb="tab"]:hover { color: #C0C0D8 !important; }
-button[data-baseweb="tab"][aria-selected="true"] {
-    background: transparent !important;
-    color: #FFFFFF !important;
+/* ── Headings ────────────────────────────────── */
+/* h1 — app name in sidebar */
+h1 {
+    font-size: 11px !important;
     font-weight: 600 !important;
-    border-bottom: 2px solid #FFFFFF !important;
+    letter-spacing: 0.20em !important;
+    text-transform: uppercase !important;
+    color: var(--text-dim) !important;
 }
-
-/* ── Divider ── */
-hr { border: none; border-top: 1px solid rgba(255,255,255,0.07) !important; margin: 1.6rem 0 !important; }
-
-/* ── Signal badges ── */
-.badge-buy  { background: rgba(34,197,94,0.10); color: #22C55E;
-              border: 1px solid rgba(34,197,94,0.25);
-              padding: 2px 10px; border-radius: 0;
-              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
-              text-transform: uppercase; }
-.badge-sell { background: rgba(239,68,68,0.10); color: #EF4444;
-              border: 1px solid rgba(239,68,68,0.25);
-              padding: 2px 10px; border-radius: 0;
-              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
-              text-transform: uppercase; }
-.badge-neu  { background: rgba(148,163,184,0.08); color: #94A3B8;
-              border: 1px solid rgba(148,163,184,0.20);
-              padding: 2px 10px; border-radius: 0;
-              font-weight: 600; font-size: 11px; letter-spacing: 0.08em;
-              text-transform: uppercase; }
-
-/* ── Color helpers ── */
-.pos { color: #22C55E; font-weight: 600; }
-.neg { color: #EF4444; font-weight: 600; }
-.neu { color: #94A3B8; }
-
-/* ── Admin banner ── */
-.admin-banner {
-    background: rgba(239,68,68,0.05);
-    border: 1px solid rgba(239,68,68,0.22);
-    border-radius: 0;
-    padding: 8px 14px;
-    color: #EF4444;
-    font-size: 10px;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-}
-
-/* ── Dataframes ── */
-div[data-testid="stDataFrame"] { border-radius: 0; overflow: hidden; }
-div[data-testid="stDataFrame"] th {
-    background: #0F0F18 !important;
-    color: #55556A !important;
+/* h2 — section labels, not headings */
+h2 {
     font-size: 10px !important;
     font-weight: 600 !important;
-    letter-spacing: 0.08em !important;
+    letter-spacing: 0.16em !important;
+    text-transform: uppercase !important;
+    color: var(--text-muted) !important;
+    border-top: 1px solid var(--border) !important;
+    border-bottom: none !important;
+    padding: 14px 0 4px !important;
+    margin-top: 1.6rem !important;
+    margin-bottom: 0.6rem !important;
+}
+h3 {
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    color: var(--text-muted) !important;
+    letter-spacing: 0.14em !important;
     text-transform: uppercase !important;
 }
 
-/* ── Buttons ── */
+/* ── Navigation tabs ─────────────────────────── */
+div[data-baseweb="tab-list"] {
+    background: transparent !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+    gap: 0 !important;
+    border-bottom: 1px solid var(--border) !important;
+}
+button[data-baseweb="tab"] {
+    font-size: 11px !important;
+    font-weight: 500 !important;
+    color: var(--text-muted) !important;
+    border-radius: 0 !important;
+    padding: 9px 18px !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    border-bottom: 2px solid transparent !important;
+    background: transparent !important;
+    transition: color 0.1s !important;
+}
+button[data-baseweb="tab"]:hover { color: var(--text-dim) !important; }
+button[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--text) !important;
+    font-weight: 600 !important;
+    border-bottom: 2px solid var(--text) !important;
+}
+
+/* ── Dividers ────────────────────────────────── */
+hr {
+    border: none !important;
+    border-top: 1px solid var(--border) !important;
+    margin: 1.4rem 0 !important;
+}
+
+/* ── Signal badges ───────────────────────────── */
+.badge-buy  { color: var(--green); border: 1px solid rgba(46,204,113,0.3);
+              padding: 1px 9px; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.10em; text-transform: uppercase; }
+.badge-sell { color: var(--red); border: 1px solid rgba(224,82,82,0.3);
+              padding: 1px 9px; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.10em; text-transform: uppercase; }
+.badge-neu  { color: var(--text-muted); border: 1px solid var(--border);
+              padding: 1px 9px; font-size: 10px; font-weight: 600;
+              letter-spacing: 0.10em; text-transform: uppercase; }
+
+/* ── Colour helpers ──────────────────────────── */
+.pos { color: var(--green); font-variant-numeric: tabular-nums; }
+.neg { color: var(--red);   font-variant-numeric: tabular-nums; }
+.neu { color: var(--text-dim); }
+
+/* ── Admin strip ─────────────────────────────── */
+.admin-banner {
+    border-top: 1px solid rgba(224,82,82,0.30);
+    border-bottom: 1px solid rgba(224,82,82,0.30);
+    padding: 5px 0;
+    color: var(--red);
+    font-size: 9px;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    background: transparent;
+}
+
+/* ── Tables / DataFrames ─────────────────────── */
+div[data-testid="stDataFrame"] { border-radius: 0; overflow: hidden; }
+div[data-testid="stDataFrame"] th {
+    background: var(--bg2) !important;
+    color: var(--text-muted) !important;
+    font-size: 9px !important;
+    font-weight: 600 !important;
+    letter-spacing: 0.10em !important;
+    text-transform: uppercase !important;
+    border-bottom: 1px solid var(--border) !important;
+}
+div[data-testid="stDataFrame"] td {
+    font-variant-numeric: tabular-nums;
+    font-size: 12px !important;
+}
+
+/* ── Buttons ─────────────────────────────────── */
 div[data-testid="stButton"] button {
-    background: #111119;
-    border: 1px solid rgba(255,255,255,0.10);
-    color: #D0D0E0;
-    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 11px;
     font-weight: 500;
     border-radius: 0;
-    letter-spacing: 0.04em;
-    transition: all 0.12s;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    transition: border-color 0.1s, color 0.1s;
 }
 div[data-testid="stButton"] button:hover {
-    background: #1A1A26;
-    border-color: rgba(255,255,255,0.22);
-    color: #FFFFFF;
+    border-color: var(--border-hi);
+    color: var(--text);
+    background: var(--bg3);
 }
 
-/* ── Inputs / Selects ── */
+/* ── Inputs / Selects ────────────────────────── */
 div[data-testid="stSelectbox"] > div,
 div[data-testid="stMultiSelect"] > div {
-    background: #0F0F18;
-    border: 1px solid rgba(255,255,255,0.08);
+    background: var(--bg2);
+    border: 1px solid var(--border);
     border-radius: 0;
 }
 
-/* ── Info / Warning ── */
+/* ── Alert / Info / Warning ──────────────────── */
 div[data-testid="stAlert"] {
     border-radius: 0;
     border-left-width: 2px;
-    font-size: 13px;
+    font-size: 12px;
+    background: var(--bg2) !important;
 }
 
-/* ── Caption / small text ── */
+/* ── Caption / small text ────────────────────── */
 .stCaption, small, caption {
-    color: #44445A !important;
+    color: var(--text-muted) !important;
     font-size: 11px !important;
 }
 
-/* ── Expander ── */
+/* ── Expander ────────────────────────────────── */
 div[data-testid="stExpander"] {
-    border: 1px solid rgba(255,255,255,0.07) !important;
+    border: 1px solid var(--border) !important;
     border-radius: 0 !important;
+    background: transparent !important;
+}
+div[data-testid="stExpander"] summary {
+    font-size: 11px !important;
+    letter-spacing: 0.06em !important;
+    text-transform: uppercase !important;
+    color: var(--text-dim) !important;
 }
 
-/* ── Slider / Radio ── */
-div[data-testid="stSlider"] > div { border-radius: 0 !important; }
+/* ── Spinner ─────────────────────────────────── */
+div[data-testid="stSpinner"] { color: var(--text-muted) !important; }
+
+/* ── Scrollbar ───────────────────────────────── */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--text-faint); }
+
+/* ── Number formatting everywhere ────────────── */
+[data-testid="stMetricValue"],
+[data-testid="stMetricDelta"],
+td, th { font-variant-numeric: tabular-nums; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1115,8 +1174,15 @@ def main():
 
     # ── SIDEBAR ──────────────────────────────────────────────────────────────
     with st.sidebar:
-        st.markdown("## OMX30 Analyzer Pro")
-        st.caption(f"Senast uppdaterad: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        st.markdown(
+            f'<div style="padding:16px 0 12px;">'
+            f'<div style="font-size:11px;font-weight:600;letter-spacing:0.20em;'
+            f'text-transform:uppercase;color:#909090;">OMX30 Analyzer</div>'
+            f'<div style="font-size:10px;letter-spacing:0.06em;color:#484848;margin-top:3px;">'
+            f'{datetime.now().strftime("%Y-%m-%d %H:%M")}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
         refresh_opt = st.radio(
             "Kursuppdatering",
@@ -1129,7 +1195,7 @@ def main():
             st.session_state.refresh_interval = refresh_opt
             st.rerun()
 
-        st.caption(f"Uppdatering #{refresh_count} &nbsp;|&nbsp; Intervall: {refresh_opt}s")
+        st.caption(f"Uppdatering #{refresh_count}")
         st.divider()
 
         selected = st.selectbox("Välj aktie", list(OMX30.keys()),
@@ -1214,23 +1280,35 @@ def main():
     chg  = cp - prev
     pchg = chg / prev * 100 if prev else 0
 
-    col_h1, col_h2 = st.columns([4, 1])
-    with col_h1:
-        color = "#00e676" if chg >= 0 else "#ff1744"
-        arrow = "▲" if chg >= 0 else "▼"
-        st.markdown(
-            f"## {selected} &nbsp;"
-            f'<span style="color:{color};font-size:1.1em">'
-            f"{cp:.2f} SEK &nbsp; {arrow} {chg:+.2f} ({pchg:+.2f}%)</span>",
-            unsafe_allow_html=True)
-        interval_label = "1 min" if st.session_state.refresh_interval == 60 else "5 min"
-        st.caption(f"Ticker: **{ticker}** &nbsp;|&nbsp; Börs: Nasdaq Stockholm &nbsp;|&nbsp; "
-                   f"Valuta: SEK &nbsp;|&nbsp; Sektor: {info.get('sector','N/A')} &nbsp;|&nbsp; "
-                   f"Live-kurs uppdateras var {interval_label}")
-    with col_h2:
-        if st.session_state.admin:
-            st.markdown('<div class="admin-banner" style="text-align:center">ADMIN</div>',
-                        unsafe_allow_html=True)
+    _chg_color = "#2ECC71" if chg >= 0 else "#E05252"
+    _chg_sign  = "+" if chg >= 0 else ""
+    _admin_strip = (
+        '<span style="font-size:9px;font-weight:600;letter-spacing:0.18em;'
+        'text-transform:uppercase;color:#E05252;border:1px solid rgba(224,82,82,0.3);'
+        'padding:2px 8px;">ADMIN</span>'
+        if st.session_state.admin else ""
+    )
+    interval_label = "1 min" if st.session_state.refresh_interval == 60 else "5 min"
+    sector = info.get("sector", "")
+    st.markdown(
+        f'<div style="padding:18px 0 14px;border-bottom:1px solid rgba(255,255,255,0.08);">'
+        f'<div style="display:flex;align-items:baseline;gap:20px;">'
+        f'<span style="font-size:20px;font-weight:600;letter-spacing:-0.01em;color:#E8E8E8;">'
+        f'{selected}</span>'
+        f'<span style="font-size:20px;font-weight:400;color:#E8E8E8;font-variant-numeric:tabular-nums;">'
+        f'{cp:.2f}</span>'
+        f'<span style="font-size:14px;font-weight:400;color:{_chg_color};font-variant-numeric:tabular-nums;">'
+        f'{_chg_sign}{chg:.2f} &nbsp; {_chg_sign}{pchg:.2f}%</span>'
+        f'{"&nbsp;&nbsp;" + _admin_strip if _admin_strip else ""}'
+        f'</div>'
+        f'<div style="font-size:11px;color:#585858;margin-top:5px;letter-spacing:0.02em;">'
+        f'{ticker} &nbsp;·&nbsp; Nasdaq Stockholm &nbsp;·&nbsp; SEK'
+        f'{" &nbsp;·&nbsp; " + sector if sector else ""}'
+        f' &nbsp;·&nbsp; uppdateras var {interval_label}'
+        f'</div>'
+        f'</div>',
+        unsafe_allow_html=True
+    )
 
     # ── QUICK METRICS ─────────────────────────────────────────────────────────
     m1, m2, m3, m4, m5, m6 = st.columns(6)
