@@ -1013,76 +1013,122 @@ _LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
 
 def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Figure:
-    # Resamplа till lägre frekvens för långa perioder
+    """
+    Tar emot FULL historik (period='max').
+    Visar rätt grafupplösning automatiskt. Range-selector i grafen låter
+    användaren zooma 1M / 3M / 6M / 1Y / 5Y / MAX utan ny datahämtning.
+    TA-indikatorer (RSI, MACD) beräknas alltid på den råa dagsserien.
+    """
+    c_daily = df["Close"]   # råa dagsdata för RSI/MACD
+
+    # Välj grafupplösning baserat på hur lång perioden är
     dfc, res_label = candle_resolution(df)
     c = dfc["Close"]
 
-    # RSI och MACD beräknas på originaldata (dagsdata) för korrekt signal
-    c_daily = df["Close"]
-
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.025,
-        row_heights=[0.50, 0.14, 0.18, 0.18],
-        subplot_titles=(f"{ticker} — {res_label}", "Volym", "RSI 14 (dagsdata)", "MACD (dagsdata)"),
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
+        row_heights=[0.52, 0.13, 0.18, 0.17],
+        subplot_titles=(ticker, "Volym", "RSI 14", "MACD"),
     )
 
-    # Candlestick / OHLC
+    # ── Candlestick ──────────────────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
         x=dfc.index, open=dfc["Open"], high=dfc["High"],
-        low=dfc["Low"], close=c, name="Kurs",
+        low=dfc["Low"],  close=c, name="Kurs",
         increasing_line_color="#2ECC71", decreasing_line_color="#E05252",
-        increasing_fillcolor="rgba(46,204,113,0.20)", decreasing_fillcolor="rgba(224,82,82,0.20)",
+        increasing_fillcolor="rgba(46,204,113,0.18)",
+        decreasing_fillcolor="rgba(224,82,82,0.18)",
     ), 1, 1)
 
-    colors_map = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5","SMA 200":"#C87878","EMA 20":"#6BBFB5"}
+    # ── Glidande medelvärden / Bollinger ─────────────────────────────────────
+    MA_COLORS = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5",
+                 "SMA 200":"#C87878","EMA 20":"#6BBFB5"}
     for ind in indicators:
+        col = MA_COLORS.get(ind, "#888888")
         if ind == "SMA 20":
-            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 20), name="SMA 20",
-                line=dict(color=colors_map[ind], width=1.2)), 1, 1)
+            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 20),  name="SMA 20",
+                line=dict(color=col, width=1.1)), 1, 1)
         elif ind == "SMA 50":
-            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 50), name="SMA 50",
-                line=dict(color=colors_map[ind], width=1.5)), 1, 1)
+            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 50),  name="SMA 50",
+                line=dict(color=col, width=1.4)), 1, 1)
         elif ind == "SMA 200":
             fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 200), name="SMA 200",
-                line=dict(color=colors_map[ind], width=1.8)), 1, 1)
+                line=dict(color=col, width=1.8)), 1, 1)
         elif ind == "EMA 20":
-            fig.add_trace(go.Scatter(x=dfc.index, y=ema(c, 20), name="EMA 20",
-                line=dict(color=colors_map[ind], width=1.2, dash="dot")), 1, 1)
+            fig.add_trace(go.Scatter(x=dfc.index, y=ema(c, 20),  name="EMA 20",
+                line=dict(color=col, width=1.1, dash="dot")), 1, 1)
 
     if "Bollinger" in indicators:
-        ub, mb, lb = bollinger(c)
-        fig.add_trace(go.Scatter(x=dfc.index, y=ub, name="BB Övre",
-            line=dict(color="rgba(150,150,200,0.55)", dash="dash", width=1.0)), 1, 1)
-        fig.add_trace(go.Scatter(x=dfc.index, y=lb, name="BB Nedre",
-            line=dict(color="rgba(150,150,200,0.55)", dash="dash", width=1.0),
-            fill="tonexty", fillcolor="rgba(120,120,180,0.04)"), 1, 1)
+        ub, _, lb = bollinger(c)
+        fig.add_trace(go.Scatter(x=dfc.index, y=ub, name="BB+",
+            line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash")), 1, 1)
+        fig.add_trace(go.Scatter(x=dfc.index, y=lb, name="BB−",
+            line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash"),
+            fill="tonexty", fillcolor="rgba(120,120,180,0.03)"), 1, 1)
 
-    # Volym
-    bar_colors = ["#2ECC71" if cl >= op else "#E05252"
-                  for cl, op in zip(dfc["Close"], dfc["Open"])]
+    # ── Volym ────────────────────────────────────────────────────────────────
+    v_col = ["#2ECC71" if cl >= op else "#E05252"
+             for cl, op in zip(dfc["Close"], dfc["Open"])]
     fig.add_trace(go.Bar(x=dfc.index, y=dfc["Volume"], name="Volym",
-        marker_color=bar_colors, opacity=0.55), 2, 1)
+        marker_color=v_col, opacity=0.50), 2, 1)
 
-    # RSI (alltid dagsdata)
+    # ── RSI — beräknas på råa dagsdata ────────────────────────────────────────
     rsi_s = rsi(c_daily)
     fig.add_trace(go.Scatter(x=df.index, y=rsi_s, name="RSI",
-        line=dict(color="#C8A020", width=1.4)), 3, 1)
-    for lvl, col in [(70, "rgba(224,82,82,.35)"), (30, "rgba(46,204,113,.35)"),
-                     (50, "rgba(255,255,255,.10)")]:
+        line=dict(color="#C8A020", width=1.3)), 3, 1)
+    for lvl, col in [(70, "rgba(224,82,82,.30)"),
+                     (30, "rgba(46,204,113,.30)"),
+                     (50, "rgba(255,255,255,.08)")]:
         fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
 
-    # MACD (alltid dagsdata)
-    ml, sl, hist = macd(c_daily)
-    hc = ["#2ECC71" if h >= 0 else "#E05252" for h in hist]
-    fig.add_trace(go.Bar(x=df.index, y=hist, name="Histogram",
-        marker_color=hc, opacity=0.55), 4, 1)
+    # ── MACD — beräknas på råa dagsdata ───────────────────────────────────────
+    ml, sl, mhist = macd(c_daily)
+    hc = ["#2ECC71" if h >= 0 else "#E05252" for h in mhist]
+    fig.add_trace(go.Bar(x=df.index, y=mhist, name="Histogram",
+        marker_color=hc, opacity=0.50), 4, 1)
     fig.add_trace(go.Scatter(x=df.index, y=ml, name="MACD",
-        line=dict(color="#5B9BD5", width=1.4)), 4, 1)
+        line=dict(color="#5B9BD5", width=1.3)), 4, 1)
     fig.add_trace(go.Scatter(x=df.index, y=sl, name="Signal",
-        line=dict(color="#C87878", width=1.4)), 4, 1)
+        line=dict(color="#C87878", width=1.3)), 4, 1)
 
-    fig.update_layout(height=840, xaxis_rangeslider_visible=False,
-        legend=_LEGEND, **_DARK)
+    # ── Range-selector — inbyggd zoom i grafen ────────────────────────────────
+    _rs_style = dict(
+        bgcolor="#111111", bordercolor="#333333", borderwidth=1,
+        font=dict(color="#909090", size=10),
+        activecolor="#2ECC71",
+        x=0, y=1.02,
+    )
+    _rs_buttons = [
+        dict(count=1,  label="1M",  step="month", stepmode="backward"),
+        dict(count=3,  label="3M",  step="month", stepmode="backward"),
+        dict(count=6,  label="6M",  step="month", stepmode="backward"),
+        dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
+        dict(count=5,  label="5Y",  step="year",  stepmode="backward"),
+        dict(count=10, label="10Y", step="year",  stepmode="backward"),
+        dict(step="all", label="MAX"),
+    ]
+
+    # Default-vy: senaste 1 år
+    _x_end   = df.index[-1]
+    _x_start = _x_end - pd.DateOffset(years=1)
+
+    fig.update_xaxes(
+        rangeselector=dict(buttons=_rs_buttons, **_rs_style),
+        rangeslider=dict(visible=False),
+        range=[_x_start, _x_end],
+        row=1, col=1,
+    )
+    fig.update_layout(
+        height=860,
+        xaxis_rangeslider_visible=False,
+        legend=_LEGEND,
+        annotations=[
+            dict(text=res_label, x=1, y=1.01, xref="paper", yref="paper",
+                 showarrow=False, font=dict(size=9, color="#585858"),
+                 xanchor="right"),
+        ],
+        **_DARK,
+    )
     return fig
 
 
@@ -1240,12 +1286,10 @@ def main():
                                 index=list(OMX30.keys()).index("Volvo B"))
         ticker   = OMX30[selected]
 
-        period = st.select_slider("Tidsperiod",
-            options=["1mo","3mo","6mo","1y","2y","5y","10y","max"], value="1y")
-
-        inds = st.multiselect("Indikatorer på kursgraf",
+        inds = st.multiselect("Indikatorer",
             ["SMA 20","SMA 50","SMA 200","EMA 20","Bollinger"],
             default=["SMA 50","SMA 200","Bollinger"])
+        st.caption("Fullständig historik sedan börsnotering laddas alltid. Zooma i grafen.")
 
         st.divider()
         col_btn1, col_btn2 = st.columns(2)
@@ -1277,10 +1321,10 @@ def main():
                 'Fullständig systemåtkomst</div>',
                 unsafe_allow_html=True)
 
-    # ── DATA ─────────────────────────────────────────────────────────────────
+    # ── DATA — alltid full historik sedan börsnotering ───────────────────────
     try:
         with st.spinner(f"Hämtar data för {selected}…"):
-            df       = fetch_history(ticker, period)
+            df       = fetch_history_max(ticker)   # all data from IPO
             info     = fetch_info(ticker)
             fin      = fetch_financials(ticker)
             beta_omx = calc_beta_omx(ticker)
@@ -1307,6 +1351,10 @@ def main():
             st.cache_data.clear()
             st.rerun()
         st.stop()
+
+    # Senaste 252 handelsdagar för 52v-beräkningar och MC/TA
+    df_1y    = df.iloc[-252:] if len(df) >= 252 else df
+    _ipo_year = int(df.index[0].year) if not df.empty else "?"
 
     # ── HEADER ───────────────────────────────────────────────────────────────
     # Realtidspris (5 min cache) — fallback till historik
@@ -1342,6 +1390,7 @@ def main():
         f'<div style="font-size:11px;color:#585858;margin-top:5px;letter-spacing:0.02em;">'
         f'{ticker} &nbsp;·&nbsp; Nasdaq Stockholm &nbsp;·&nbsp; SEK'
         f'{" &nbsp;·&nbsp; " + sector if sector else ""}'
+        f' &nbsp;·&nbsp; Historik sedan {_ipo_year}'
         f' &nbsp;·&nbsp; uppdateras var {interval_label}'
         f'</div>'
         f'</div>',
@@ -1375,9 +1424,9 @@ def main():
         pass
 
     m1.metric("Kurs (SEK)",     f"{cp:.2f}",         f"{chg:+.2f} ({pchg:+.2f}%)")
-    m2.metric("52v Högst",      f"{df['High'].max():.2f}")
-    m3.metric("52v Lägst",      f"{df['Low'].min():.2f}")
-    m4.metric("Snittvolym",     fmt_big(df["Volume"].mean()))
+    m2.metric("52v Högst",      f"{df_1y['High'].max():.2f}")
+    m3.metric("52v Lägst",      f"{df_1y['Low'].min():.2f}")
+    m4.metric("Snittvolym",     fmt_big(df_1y["Volume"].mean()))
     m5.metric("Börsvärde",      fmt_big(_mktcap_top))
     m6.metric("P/E (trailing)", fmt_num(_pe_top))
     st.divider()
@@ -1401,9 +1450,9 @@ def main():
     with tabs[0]:
         st.plotly_chart(chart_candle(df, ticker, inds), use_container_width=True)
 
-        # Signaltabell
+        # Signaltabell — TA-signaler på senaste 252 dagsdata
         st.subheader("Handelssignaler")
-        sigs = compute_signals(df)
+        sigs = compute_signals(df_1y)
         buy_count  = sum(1 for s in sigs if s["signal"] == "KÖP")
         sell_count = sum(1 for s in sigs if s["signal"] == "SÄLJ")
         neu_count  = len(sigs) - buy_count - sell_count
@@ -1422,15 +1471,15 @@ def main():
 
         st.divider()
 
-        # Extra TA-nyckeltal
+        # Extra TA-nyckeltal — alltid senaste 252 dagsdata
         st.subheader("Nyckeltal & Nivåer")
-        c = df["Close"]
+        c = df_1y["Close"]
         rsi_v  = rsi(c).iloc[-1]
-        atr_v  = atr(df).iloc[-1]
-        wr_v   = williams_r(df).iloc[-1]
-        cci_v  = cci(df).iloc[-1]
-        obv_d  = obv(df)
-        kv, dv = stochastic(df)
+        atr_v  = atr(df_1y).iloc[-1]
+        wr_v   = williams_r(df_1y).iloc[-1]
+        cci_v  = cci(df_1y).iloc[-1]
+        obv_d  = obv(df_1y)
+        kv, dv = stochastic(df_1y)
 
         r1, r2, r3, r4 = st.columns(4)
         r1.metric("RSI 14",          f"{rsi_v:.1f}")
@@ -1447,7 +1496,7 @@ def main():
 
         # Pivotpunkter
         st.subheader("Pivotpunkter (Daglig)")
-        ph, pl, pc = float(df["High"].iloc[-1]), float(df["Low"].iloc[-1]), cp
+        ph, pl, pc = float(df_1y["High"].iloc[-1]), float(df_1y["Low"].iloc[-1]), cp
         pivot = (ph + pl + pc) / 3
         r1p = 2*pivot - pl; s1p = 2*pivot - ph
         r2p = pivot + (ph - pl); s2p = pivot - (ph - pl)
@@ -2012,7 +2061,7 @@ def main():
             )
             if mc_need_recalc:
                 with st.spinner("Kör Monte Carlo…"):
-                    mc_res = monte_carlo(df, n_sim, n_days, ci_val)
+                    mc_res = monte_carlo(df_1y, n_sim, n_days, ci_val)
                 st.session_state.mc_cache[ticker] = (mc_res, mc_params_now, mc_now_ts)
             else:
                 mc_res    = mc_cached[0]
