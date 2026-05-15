@@ -350,8 +350,21 @@ OMX30: dict[str, str] = {
 # ─────────────────────────────────────────────────────────────────────────────
 # DATA FETCHING  (cache TTL = 3600 s = 1 timme)
 # ─────────────────────────────────────────────────────────────────────────────
+@st.cache_data(ttl=86400, show_spinner=False)
+def fetch_history_max(ticker: str) -> pd.DataFrame:
+    """Full historik sedan börsnoteringen — cachas 24 h."""
+    df = _retry(lambda: _ticker(ticker).history(period="max"))
+    if df is None:
+        return pd.DataFrame()
+    if not df.empty:
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+    return df
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_history(ticker: str, period: str = "1y") -> pd.DataFrame:
+    if period == "max":
+        return fetch_history_max(ticker)
     df = _retry(lambda: _ticker(ticker).history(period=period))
     if df is None:
         return pd.DataFrame()
@@ -729,6 +742,24 @@ def cci(df: pd.DataFrame, n: int = 20) -> pd.Series:
     return (tp - tp.rolling(n).mean()) / (0.015 * mad)
 
 
+def resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resamplar OHLCV-data till lägre frekvens ('W'=vecka, 'ME'=månad)."""
+    agg = {"Open": "first", "High": "max", "Low": "min",
+           "Close": "last", "Volume": "sum"}
+    cols = {k: v for k, v in agg.items() if k in df.columns}
+    return df.resample(rule).agg(cols).dropna(subset=["Close"])
+
+
+def candle_resolution(df: pd.DataFrame):
+    """Returnerar (df_chart, resolution_label) baserat på datamängd."""
+    n = len(df)
+    if n > 2000:
+        return resample_ohlcv(df, "ME"), "Månadsljus"
+    if n > 600:
+        return resample_ohlcv(df, "W"),  "Veckoljus"
+    return df, "Dagsljus"
+
+
 def compute_signals(df: pd.DataFrame) -> list[dict]:
     c     = df["Close"]
     curr  = c.iloc[-1]
@@ -982,68 +1013,75 @@ _LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
 
 def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Figure:
+    # Resamplа till lägre frekvens för långa perioder
+    dfc, res_label = candle_resolution(df)
+    c = dfc["Close"]
+
+    # RSI och MACD beräknas på originaldata (dagsdata) för korrekt signal
+    c_daily = df["Close"]
+
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.025,
         row_heights=[0.50, 0.14, 0.18, 0.18],
-        subplot_titles=(f"{ticker} — OHLCV", "Volym", "RSI (14)", "MACD"),
+        subplot_titles=(f"{ticker} — {res_label}", "Volym", "RSI 14 (dagsdata)", "MACD (dagsdata)"),
     )
-    c = df["Close"]
 
-    # Candlestick
+    # Candlestick / OHLC
     fig.add_trace(go.Candlestick(
-        x=df.index, open=df["Open"], high=df["High"],
-        low=df["Low"], close=c, name="Kurs",
-        increasing_line_color="#00e676", decreasing_line_color="#ff1744",
-        increasing_fillcolor="rgba(0,230,118,0.27)", decreasing_fillcolor="rgba(255,23,68,0.27)",
+        x=dfc.index, open=dfc["Open"], high=dfc["High"],
+        low=dfc["Low"], close=c, name="Kurs",
+        increasing_line_color="#2ECC71", decreasing_line_color="#E05252",
+        increasing_fillcolor="rgba(46,204,113,0.20)", decreasing_fillcolor="rgba(224,82,82,0.20)",
     ), 1, 1)
 
-    colors_map = {"SMA 20":"#ffd54f","SMA 50":"#40c4ff","SMA 200":"#ea80fc","EMA 20":"#69f0ae"}
+    colors_map = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5","SMA 200":"#C87878","EMA 20":"#6BBFB5"}
     for ind in indicators:
         if ind == "SMA 20":
-            fig.add_trace(go.Scatter(x=df.index, y=sma(c, 20), name="SMA 20",
+            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 20), name="SMA 20",
                 line=dict(color=colors_map[ind], width=1.2)), 1, 1)
         elif ind == "SMA 50":
-            fig.add_trace(go.Scatter(x=df.index, y=sma(c, 50), name="SMA 50",
+            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 50), name="SMA 50",
                 line=dict(color=colors_map[ind], width=1.5)), 1, 1)
         elif ind == "SMA 200":
-            fig.add_trace(go.Scatter(x=df.index, y=sma(c, 200), name="SMA 200",
-                line=dict(color=colors_map[ind], width=2.0)), 1, 1)
+            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 200), name="SMA 200",
+                line=dict(color=colors_map[ind], width=1.8)), 1, 1)
         elif ind == "EMA 20":
-            fig.add_trace(go.Scatter(x=df.index, y=ema(c, 20), name="EMA 20",
+            fig.add_trace(go.Scatter(x=dfc.index, y=ema(c, 20), name="EMA 20",
                 line=dict(color=colors_map[ind], width=1.2, dash="dot")), 1, 1)
 
     if "Bollinger" in indicators:
         ub, mb, lb = bollinger(c)
-        fig.add_trace(go.Scatter(x=df.index, y=ub, name="BB Övre",
-            line=dict(color="rgba(120,120,255,0.6)", dash="dash")), 1, 1)
-        fig.add_trace(go.Scatter(x=df.index, y=lb, name="BB Nedre",
-            line=dict(color="rgba(120,120,255,0.6)", dash="dash"),
-            fill="tonexty", fillcolor="rgba(100,100,255,0.06)"), 1, 1)
+        fig.add_trace(go.Scatter(x=dfc.index, y=ub, name="BB Övre",
+            line=dict(color="rgba(150,150,200,0.55)", dash="dash", width=1.0)), 1, 1)
+        fig.add_trace(go.Scatter(x=dfc.index, y=lb, name="BB Nedre",
+            line=dict(color="rgba(150,150,200,0.55)", dash="dash", width=1.0),
+            fill="tonexty", fillcolor="rgba(120,120,180,0.04)"), 1, 1)
 
-    # Volume
-    bar_colors = ["#00e676" if cl >= op else "#ff1744"
-                  for cl, op in zip(df["Close"], df["Open"])]
-    fig.add_trace(go.Bar(x=df.index, y=df["Volume"], name="Volym",
-        marker_color=bar_colors, opacity=0.65), 2, 1)
+    # Volym
+    bar_colors = ["#2ECC71" if cl >= op else "#E05252"
+                  for cl, op in zip(dfc["Close"], dfc["Open"])]
+    fig.add_trace(go.Bar(x=dfc.index, y=dfc["Volume"], name="Volym",
+        marker_color=bar_colors, opacity=0.55), 2, 1)
 
-    # RSI
-    rsi_s = rsi(c)
+    # RSI (alltid dagsdata)
+    rsi_s = rsi(c_daily)
     fig.add_trace(go.Scatter(x=df.index, y=rsi_s, name="RSI",
-        line=dict(color="#ffd54f", width=1.5)), 3, 1)
-    for lvl, col in [(70, "rgba(255,23,68,.4)"), (30, "rgba(0,230,118,.4)"), (50, "rgba(255,255,255,.15)")]:
-        fig.add_hline(y=lvl, line_dash="dash", line_color=col, row=3, col=1)
+        line=dict(color="#C8A020", width=1.4)), 3, 1)
+    for lvl, col in [(70, "rgba(224,82,82,.35)"), (30, "rgba(46,204,113,.35)"),
+                     (50, "rgba(255,255,255,.10)")]:
+        fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
 
-    # MACD
-    ml, sl, hist = macd(c)
-    hc = ["#00e676" if h >= 0 else "#ff1744" for h in hist]
-    fig.add_trace(go.Bar(x=df.index, y=hist, name="Hist",
-        marker_color=hc, opacity=0.6), 4, 1)
+    # MACD (alltid dagsdata)
+    ml, sl, hist = macd(c_daily)
+    hc = ["#2ECC71" if h >= 0 else "#E05252" for h in hist]
+    fig.add_trace(go.Bar(x=df.index, y=hist, name="Histogram",
+        marker_color=hc, opacity=0.55), 4, 1)
     fig.add_trace(go.Scatter(x=df.index, y=ml, name="MACD",
-        line=dict(color="#40c4ff", width=1.5)), 4, 1)
+        line=dict(color="#5B9BD5", width=1.4)), 4, 1)
     fig.add_trace(go.Scatter(x=df.index, y=sl, name="Signal",
-        line=dict(color="#ff6d00", width=1.5)), 4, 1)
+        line=dict(color="#C87878", width=1.4)), 4, 1)
 
-    fig.update_layout(height=820, xaxis_rangeslider_visible=False,
+    fig.update_layout(height=840, xaxis_rangeslider_visible=False,
         legend=_LEGEND, **_DARK)
     return fig
 
@@ -1203,7 +1241,7 @@ def main():
         ticker   = OMX30[selected]
 
         period = st.select_slider("Tidsperiod",
-            options=["1mo","3mo","6mo","1y","2y","5y"], value="1y")
+            options=["1mo","3mo","6mo","1y","2y","5y","10y","max"], value="1y")
 
         inds = st.multiselect("Indikatorer på kursgraf",
             ["SMA 20","SMA 50","SMA 200","EMA 20","Bollinger"],
@@ -1316,19 +1354,25 @@ def main():
     _shares_top  = float(info.get("sharesOutstanding") or
                          _val(fin["q_balance"], 0, "Ordinary Shares Number","Share Issued") or 0)
     _mktcap_top  = info.get("marketCap") or (cp * _shares_top if _shares_top > 0 else None)
+    _fx_top      = get_fx_multiplier(info)   # SEK-faktor för EUR/USD-bolag
     _pe_top      = info.get("trailingPE")
-    if not _pe_top and _mktcap_top:
-        try:
-            _qi = fin["q_income"]
-            _ttm_ni = sum(v for i in range(4)
-                          for k in ["Net Income","Net Income Common Stockholders"]
-                          if not _qi.empty and k in _qi.index
-                          for v in [float(_qi.loc[k].iloc[i])]
-                          if pd.notna(v)) if not _qi.empty else 0
-            if _ttm_ni > 0:
-                _pe_top = _mktcap_top / _ttm_ni
-        except Exception:
-            pass
+    # Räkna alltid om P/E från kvartalssiffror så att FX-bolag (Nordea, ABB etc.) stämmer
+    try:
+        _qi = fin["q_income"]
+        if not _qi.empty and _mktcap_top:
+            _ttm_ni_raw = 0.0
+            for _i in range(min(4, len(_qi.columns))):
+                for _k in ["Net Income","Net Income Common Stockholders"]:
+                    if _k in _qi.index:
+                        _v = _qi.loc[_k].iloc[_i]
+                        if pd.notna(_v):
+                            _ttm_ni_raw += float(_v)
+                            break
+            _ttm_ni_sek = _ttm_ni_raw * _fx_top
+            if _ttm_ni_sek > 0:
+                _pe_top = _mktcap_top / _ttm_ni_sek
+    except Exception:
+        pass
 
     m1.metric("Kurs (SEK)",     f"{cp:.2f}",         f"{chg:+.2f} ({pchg:+.2f}%)")
     m2.metric("52v Högst",      f"{df['High'].max():.2f}")
@@ -1479,36 +1523,50 @@ def main():
 
         st.divider()
 
-        # ── TTM från 4 senaste kvartal, omräknat till SEK via fx ─────────────
-        def _ttm(df, *keys):
-            vals = [_val(df, i, *keys) for i in range(4)]
-            total = sum(v for v in vals if v is not None)
-            return (total * fx) if total != 0 else None
+        # ── TTM från 4 senaste kvartal → fallback årsdata → omräknat till SEK ─
+        def _ttm(q_df, a_df, *keys):
+            """TTM = summa av 4 senaste kvartal. Fallback till senaste årsdata."""
+            if not q_df.empty:
+                vals = [_val(q_df, i, *keys) for i in range(min(4, len(q_df.columns)))]
+                total = sum(v for v in vals if v is not None)
+                if total != 0:
+                    return total * fx
+            # Årsdata-fallback
+            if a_df is not None and not a_df.empty:
+                v = _val(a_df, 0, *keys)
+                if v is not None:
+                    return v * fx
+            return None
 
-        def _bs(df, *keys):
-            """Balansräkningsvärde omräknat till SEK."""
-            v = _val(df, 0, *keys)
+        def _bs(q_df, a_df, *keys):
+            """Balanspost — kvartal → årsdata → None."""
+            v = _val(q_df, 0, *keys) if not q_df.empty else None
+            if v is None and a_df is not None and not a_df.empty:
+                v = _val(a_df, 0, *keys)
             return (v * fx) if v is not None else None
 
-        ttm_ni     = _ttm(qi,  "Net Income","Net Income Common Stockholders")
-        ttm_rev    = _ttm(qi,  "Total Revenue","Operating Revenue")
-        ttm_oi     = _ttm(qi,  "Operating Income","Total Operating Income As Reported")
-        ttm_ebit   = _ttm(qi,  "EBIT") or ttm_oi
-        ttm_gp     = _ttm(qi,  "Gross Profit")
-        ttm_ebitda = _ttm(qi,  "EBITDA","Normalized EBITDA")
-        ttm_fcf    = _ttm(qcf, "Free Cash Flow")
-        ttm_ocf    = _ttm(qcf, "Operating Cash Flow")
-        ttm_int    = _ttm(qi,  "Interest Expense Non Operating","Interest Expense")
+        ab  = fin.get("balance", pd.DataFrame())   # årsbalansräkning
+        acf = fin.get("cashflow", pd.DataFrame())  # årskassaflöde
 
-        net_debt  = _bs(qb, "Net Debt")
-        tot_eq    = _bs(qb, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
-        tot_debt  = _bs(qb, "Total Debt")
-        cash_q    = _bs(qb, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
-        tot_assets= _bs(qb, "Total Assets")
-        cur_assets= _bs(qb, "Current Assets","Total Current Assets")
-        cur_liab  = _bs(qb, "Current Liabilities","Total Current Liabilities")
-        inv_q     = _bs(qb, "Inventory")
-        capex_q   = _val(qcf, 0, "Capital Expenditure")
+        ttm_ni     = _ttm(qi,  ai,  "Net Income","Net Income Common Stockholders")
+        ttm_rev    = _ttm(qi,  ai,  "Total Revenue","Operating Revenue")
+        ttm_oi     = _ttm(qi,  ai,  "Operating Income","Total Operating Income As Reported")
+        ttm_ebit   = _ttm(qi,  ai,  "EBIT") or ttm_oi
+        ttm_gp     = _ttm(qi,  ai,  "Gross Profit")
+        ttm_ebitda = _ttm(qi,  ai,  "EBITDA","Normalized EBITDA")
+        ttm_fcf    = _ttm(qcf, acf, "Free Cash Flow")
+        ttm_ocf    = _ttm(qcf, acf, "Operating Cash Flow")
+        ttm_int    = _ttm(qi,  ai,  "Interest Expense Non Operating","Interest Expense")
+
+        net_debt  = _bs(qb, ab, "Net Debt")
+        tot_eq    = _bs(qb, ab, "Common Stock Equity","Stockholders Equity","Total Equity Gross Minority Interest")
+        tot_debt  = _bs(qb, ab, "Total Debt")
+        cash_q    = _bs(qb, ab, "Cash And Cash Equivalents","Cash Cash Equivalents And Short Term Investments")
+        tot_assets= _bs(qb, ab, "Total Assets")
+        cur_assets= _bs(qb, ab, "Current Assets","Total Current Assets")
+        cur_liab  = _bs(qb, ab, "Current Liabilities","Total Current Liabilities")
+        inv_q     = _bs(qb, ab, "Inventory")
+        capex_q   = _val(qcf, 0, "Capital Expenditure") if not qcf.empty else _val(acf, 0, "Capital Expenditure")
         if capex_q: capex_q *= fx
 
         # ── Aktier: info → fast_info → balansräkning ─────────────────────────
@@ -1551,6 +1609,26 @@ def main():
         ev_ebitda_c= ev / ttm_ebitda         if ev and ttm_ebitda and ttm_ebitda > 0 else None
         ev_rev_c   = ev / ttm_rev            if ev and ttm_rev else None
 
+        # ── YoY-tillväxt (måste beräknas INNAN PEG) ──────────────────────────
+        rev_yoy = None
+        if not qi.empty and len(qi.columns) >= 5:
+            r_now  = _val(qi, 0, "Total Revenue","Operating Revenue")
+            r_year = _val(qi, 4, "Total Revenue","Operating Revenue")
+            if r_now and r_year and r_year != 0:
+                rev_yoy = (r_now - r_year) / abs(r_year)
+        if rev_yoy is None:
+            rev_yoy = info.get("revenueGrowth")
+
+        ni_yoy = None
+        if not qi.empty and len(qi.columns) >= 5:
+            n_now  = _val(qi, 0, "Net Income","Net Income Common Stockholders")
+            n_year = _val(qi, 4, "Net Income","Net Income Common Stockholders")
+            if n_now and n_year and n_year != 0:
+                ni_yoy = (n_now - n_year) / abs(n_year)
+        if ni_yoy is None:
+            ni_yoy = info.get("earningsGrowth")
+
+        # ── Värderingsmultiplar ────────────────────────────────────────────────
         # P/E: rapport-beräknad är alltid korrekt, info kan vara försenad
         pe_v   = pe_calc or info.get("trailingPE")
         # Forward P/E: info eller fast_info
@@ -1562,24 +1640,10 @@ def main():
         evebit = ev_ebitda_c or info.get("enterpriseToEbitda")
         evrev  = ev_rev_c    or info.get("enterpriseToRevenue")
         ev_ebit_r = ev / ttm_ebit if ev and ttm_ebit and ttm_ebit > 0 else None
-        # PEG: pe / tillväxt
+        # PEG: pe / tillväxttakt (nu korrekt definierad)
         peg_v  = info.get("pegRatio")
-        if not peg_v and pe_v and rev_yoy and rev_yoy > 0:
-            peg_v = pe_v / (rev_yoy * 100)
-
-        # YoY-tillväxt
-        rev_yoy = None
-        if not qi.empty and len(qi.columns) >= 5:
-            r_now  = _val(qi, 0, "Total Revenue","Operating Revenue")
-            r_year = _val(qi, 4, "Total Revenue","Operating Revenue")
-            if r_now and r_year and r_year != 0:
-                rev_yoy = (r_now - r_year) / abs(r_year)
-        ni_yoy = None
-        if not qi.empty and len(qi.columns) >= 5:
-            n_now  = _val(qi, 0, "Net Income")
-            n_year = _val(qi, 4, "Net Income")
-            if n_now and n_year and n_year != 0:
-                ni_yoy = (n_now - n_year) / abs(n_year)
+        if not peg_v and pe_v and rev_yoy and float(rev_yoy) > 0:
+            peg_v = pe_v / (float(rev_yoy) * 100)
 
         # Direktavkastning: dividendRate från info (berikat med historik i fetch_info)
         dy   = get_dividend_yield(info)
