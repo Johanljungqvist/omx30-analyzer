@@ -348,17 +348,51 @@ OMX30: dict[str, str] = {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# DATA FETCHING  (cache TTL = 3600 s = 1 timme)
+# OHLCV RESAMPLING  (används av fetch_history_intraday och chart)
+# ─────────────────────────────────────────────────────────────────────────────
+def resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
+    """Resamplar OHLCV-data till annan frekvens ('W', 'ME', '12h' etc.)."""
+    agg = {"Open": "first", "High": "max", "Low": "min",
+           "Close": "last", "Volume": "sum"}
+    cols = {k: v for k, v in agg.items() if k in df.columns}
+    return df.resample(rule).agg(cols).dropna(subset=["Close"])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DATA FETCHING
 # ─────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=86400, show_spinner=False)
 def fetch_history_max(ticker: str) -> pd.DataFrame:
-    """Full historik sedan börsnoteringen — cachas 24 h."""
-    df = _retry(lambda: _ticker(ticker).history(period="max"))
+    """Full historik sedan börsnoteringen — dagskurser, cachas 24 h."""
+    df = _retry(lambda: _ticker(ticker).history(period="max", interval="1d"))
     if df is None:
         return pd.DataFrame()
     if not df.empty:
         df.index = pd.to_datetime(df.index).tz_localize(None)
     return df
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def fetch_history_intraday(ticker: str, interval: str = "1h") -> pd.DataFrame:
+    """
+    Intraday OHLCV för grafvisning.
+    yfinance-gränser: 1h → max 730d, 30m → 60d, 15m → 60d.
+    12H returneras som 1H resamplad till 12H internt.
+    """
+    _fetch_interval = "1h" if interval == "12h" else interval
+    _period_map = {"1h": "730d", "30m": "60d", "15m": "60d"}
+    _period = _period_map.get(_fetch_interval, "730d")
+    try:
+        df = _retry(lambda: _ticker(ticker).history(
+            period=_period, interval=_fetch_interval))
+        if df is None or df.empty:
+            return pd.DataFrame()
+        df.index = pd.to_datetime(df.index).tz_localize(None)
+        if interval == "12h":
+            df = resample_ohlcv(df, "12h")
+        return df
+    except Exception:
+        return pd.DataFrame()
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -742,24 +776,6 @@ def cci(df: pd.DataFrame, n: int = 20) -> pd.Series:
     return (tp - tp.rolling(n).mean()) / (0.015 * mad)
 
 
-def resample_ohlcv(df: pd.DataFrame, rule: str) -> pd.DataFrame:
-    """Resamplar OHLCV-data till lägre frekvens ('W'=vecka, 'ME'=månad)."""
-    agg = {"Open": "first", "High": "max", "Low": "min",
-           "Close": "last", "Volume": "sum"}
-    cols = {k: v for k, v in agg.items() if k in df.columns}
-    return df.resample(rule).agg(cols).dropna(subset=["Close"])
-
-
-def candle_resolution(df: pd.DataFrame):
-    """Returnerar (df_chart, resolution_label) baserat på datamängd."""
-    n = len(df)
-    if n > 2000:
-        return resample_ohlcv(df, "ME"), "Månadsljus"
-    if n > 600:
-        return resample_ohlcv(df, "W"),  "Veckoljus"
-    return df, "Dagsljus"
-
-
 def compute_signals(df: pd.DataFrame) -> list[dict]:
     c     = df["Close"]
     curr  = c.iloc[-1]
@@ -1012,121 +1028,136 @@ _DARK = dict(template="plotly_dark",
 _LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
 
-def chart_candle(df: pd.DataFrame, ticker: str, indicators: list[str]) -> go.Figure:
+def chart_candle(
+    df_chart: pd.DataFrame,
+    df_daily: pd.DataFrame,
+    ticker: str,
+    indicators: list[str],
+    interval: str = "1d",
+) -> go.Figure:
     """
-    Tar emot FULL historik (period='max').
-    Visar rätt grafupplösning automatiskt. Range-selector i grafen låter
-    användaren zooma 1M / 3M / 6M / 1Y / 5Y / MAX utan ny datahämtning.
-    TA-indikatorer (RSI, MACD) beräknas alltid på den råa dagsserien.
+    df_chart  — data i valt intervall (1d/1h/12h), används för ljus och volym
+    df_daily  — dagskurser (max-historik), används för RSI/MACD så att
+                dessa indikatorer alltid är korrekta oavsett ljusstorlek
+    interval  — "1d" | "1h" | "12h"
     """
-    c_daily = df["Close"]   # råa dagsdata för RSI/MACD
+    c      = df_chart["Close"]
+    c_day  = df_daily["Close"]
 
-    # Välj grafupplösning baserat på hur lång perioden är
-    dfc, res_label = candle_resolution(df)
-    c = dfc["Close"]
+    _interval_label = {"1d": "Dagsljus", "1h": "Timljus", "12h": "12h-ljus"}.get(interval, interval)
 
     fig = make_subplots(
         rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
         row_heights=[0.52, 0.13, 0.18, 0.17],
-        subplot_titles=(ticker, "Volym", "RSI 14", "MACD"),
+        subplot_titles=(ticker, "Volym", "RSI 14 (dag)", "MACD (dag)"),
     )
 
     # ── Candlestick ──────────────────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
-        x=dfc.index, open=dfc["Open"], high=dfc["High"],
-        low=dfc["Low"],  close=c, name="Kurs",
+        x=df_chart.index,
+        open=df_chart["Open"], high=df_chart["High"],
+        low=df_chart["Low"],   close=c,
+        name=_interval_label,
         increasing_line_color="#2ECC71", decreasing_line_color="#E05252",
         increasing_fillcolor="rgba(46,204,113,0.18)",
         decreasing_fillcolor="rgba(224,82,82,0.18)",
     ), 1, 1)
 
-    # ── Glidande medelvärden / Bollinger ─────────────────────────────────────
+    # ── Glidande medelvärden / Bollinger (beräknas på grafens tidserie) ──────
     MA_COLORS = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5",
                  "SMA 200":"#C87878","EMA 20":"#6BBFB5"}
     for ind in indicators:
-        col = MA_COLORS.get(ind, "#888888")
+        col = MA_COLORS.get(ind, "#888")
         if ind == "SMA 20":
-            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 20),  name="SMA 20",
-                line=dict(color=col, width=1.1)), 1, 1)
+            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 20),
+                name="SMA 20",  line=dict(color=col, width=1.1)), 1, 1)
         elif ind == "SMA 50":
-            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 50),  name="SMA 50",
-                line=dict(color=col, width=1.4)), 1, 1)
+            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 50),
+                name="SMA 50",  line=dict(color=col, width=1.4)), 1, 1)
         elif ind == "SMA 200":
-            fig.add_trace(go.Scatter(x=dfc.index, y=sma(c, 200), name="SMA 200",
-                line=dict(color=col, width=1.8)), 1, 1)
+            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 200),
+                name="SMA 200", line=dict(color=col, width=1.8)), 1, 1)
         elif ind == "EMA 20":
-            fig.add_trace(go.Scatter(x=dfc.index, y=ema(c, 20),  name="EMA 20",
-                line=dict(color=col, width=1.1, dash="dot")), 1, 1)
-
+            fig.add_trace(go.Scatter(x=df_chart.index, y=ema(c, 20),
+                name="EMA 20",  line=dict(color=col, width=1.1, dash="dot")), 1, 1)
     if "Bollinger" in indicators:
         ub, _, lb = bollinger(c)
-        fig.add_trace(go.Scatter(x=dfc.index, y=ub, name="BB+",
+        fig.add_trace(go.Scatter(x=df_chart.index, y=ub, name="BB+",
             line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash")), 1, 1)
-        fig.add_trace(go.Scatter(x=dfc.index, y=lb, name="BB−",
+        fig.add_trace(go.Scatter(x=df_chart.index, y=lb, name="BB−",
             line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash"),
             fill="tonexty", fillcolor="rgba(120,120,180,0.03)"), 1, 1)
 
     # ── Volym ────────────────────────────────────────────────────────────────
     v_col = ["#2ECC71" if cl >= op else "#E05252"
-             for cl, op in zip(dfc["Close"], dfc["Open"])]
-    fig.add_trace(go.Bar(x=dfc.index, y=dfc["Volume"], name="Volym",
-        marker_color=v_col, opacity=0.50), 2, 1)
+             for cl, op in zip(df_chart["Close"], df_chart["Open"])]
+    fig.add_trace(go.Bar(x=df_chart.index, y=df_chart["Volume"],
+        name="Volym", marker_color=v_col, opacity=0.48), 2, 1)
 
-    # ── RSI — beräknas på råa dagsdata ────────────────────────────────────────
-    rsi_s = rsi(c_daily)
-    fig.add_trace(go.Scatter(x=df.index, y=rsi_s, name="RSI",
+    # ── RSI på dagskurser (alltid korrekt) ───────────────────────────────────
+    rsi_s = rsi(c_day)
+    fig.add_trace(go.Scatter(x=df_daily.index, y=rsi_s, name="RSI",
         line=dict(color="#C8A020", width=1.3)), 3, 1)
-    for lvl, col in [(70, "rgba(224,82,82,.30)"),
-                     (30, "rgba(46,204,113,.30)"),
-                     (50, "rgba(255,255,255,.08)")]:
+    for lvl, col in [(70,"rgba(224,82,82,.28)"),(30,"rgba(46,204,113,.28)"),
+                     (50,"rgba(255,255,255,.07)")]:
         fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
 
-    # ── MACD — beräknas på råa dagsdata ───────────────────────────────────────
-    ml, sl, mhist = macd(c_daily)
+    # ── MACD på dagskurser ───────────────────────────────────────────────────
+    ml, sl, mhist = macd(c_day)
     hc = ["#2ECC71" if h >= 0 else "#E05252" for h in mhist]
-    fig.add_trace(go.Bar(x=df.index, y=mhist, name="Histogram",
-        marker_color=hc, opacity=0.50), 4, 1)
-    fig.add_trace(go.Scatter(x=df.index, y=ml, name="MACD",
+    fig.add_trace(go.Bar(x=df_daily.index, y=mhist,
+        name="Histogram", marker_color=hc, opacity=0.48), 4, 1)
+    fig.add_trace(go.Scatter(x=df_daily.index, y=ml,  name="MACD",
         line=dict(color="#5B9BD5", width=1.3)), 4, 1)
-    fig.add_trace(go.Scatter(x=df.index, y=sl, name="Signal",
+    fig.add_trace(go.Scatter(x=df_daily.index, y=sl,  name="Signal",
         line=dict(color="#C87878", width=1.3)), 4, 1)
 
-    # ── Range-selector — inbyggd zoom i grafen ────────────────────────────────
+    # ── Range-selector — anpassade knappar per intervall ─────────────────────
     _rs_style = dict(
-        bgcolor="#111111", bordercolor="#333333", borderwidth=1,
+        bgcolor="#0C0C0C", bordercolor="#2A2A2A", borderwidth=1,
         font=dict(color="#909090", size=10),
-        activecolor="#2ECC71",
-        x=0, y=1.02,
+        activecolor="#2ECC71", x=0, y=1.025,
     )
-    _rs_buttons = [
-        dict(count=1,  label="1M",  step="month", stepmode="backward"),
-        dict(count=3,  label="3M",  step="month", stepmode="backward"),
-        dict(count=6,  label="6M",  step="month", stepmode="backward"),
-        dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
-        dict(count=5,  label="5Y",  step="year",  stepmode="backward"),
-        dict(count=10, label="10Y", step="year",  stepmode="backward"),
-        dict(step="all", label="MAX"),
-    ]
-
-    # Default-vy: senaste 1 år
-    _x_end   = df.index[-1]
-    _x_start = _x_end - pd.DateOffset(years=1)
+    if interval == "1d":
+        # Dagskurser: full historik tillgänglig
+        _rs_buttons = [
+            dict(count=1,  label="1M",  step="month", stepmode="backward"),
+            dict(count=3,  label="3M",  step="month", stepmode="backward"),
+            dict(count=6,  label="6M",  step="month", stepmode="backward"),
+            dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
+            dict(count=5,  label="5Y",  step="year",  stepmode="backward"),
+            dict(count=10, label="10Y", step="year",  stepmode="backward"),
+            dict(step="all", label="MAX"),
+        ]
+        _default_start = df_chart.index[-1] - pd.DateOffset(years=1)
+    else:
+        # Intraday: max 730 dagar (1h) — kortare default-vy
+        _rs_buttons = [
+            dict(count=1,  label="1D",  step="day",   stepmode="backward"),
+            dict(count=5,  label="1V",  step="day",   stepmode="backward"),
+            dict(count=1,  label="1M",  step="month", stepmode="backward"),
+            dict(count=3,  label="3M",  step="month", stepmode="backward"),
+            dict(count=6,  label="6M",  step="month", stepmode="backward"),
+            dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
+            dict(step="all", label="MAX"),
+        ]
+        _default_start = df_chart.index[-1] - pd.DateOffset(weeks=2)
 
     fig.update_xaxes(
         rangeselector=dict(buttons=_rs_buttons, **_rs_style),
         rangeslider=dict(visible=False),
-        range=[_x_start, _x_end],
+        range=[_default_start, df_chart.index[-1]],
         row=1, col=1,
     )
     fig.update_layout(
         height=860,
         xaxis_rangeslider_visible=False,
         legend=_LEGEND,
-        annotations=[
-            dict(text=res_label, x=1, y=1.01, xref="paper", yref="paper",
-                 showarrow=False, font=dict(size=9, color="#585858"),
-                 xanchor="right"),
-        ],
+        annotations=[dict(
+            text=_interval_label, x=1, y=1.025,
+            xref="paper", yref="paper", showarrow=False,
+            font=dict(size=9, color="#585858"), xanchor="right",
+        )],
         **_DARK,
     )
     return fig
@@ -1286,10 +1317,17 @@ def main():
                                 index=list(OMX30.keys()).index("Volvo B"))
         ticker   = OMX30[selected]
 
+        chart_interval = st.radio(
+            "Ljusstorlek",
+            options=["1d", "1h", "12h"],
+            format_func=lambda x: {"1d": "1 dag", "1h": "1 timme", "12h": "12 timmar"}[x],
+            horizontal=True,
+            index=0,
+        )
+
         inds = st.multiselect("Indikatorer",
             ["SMA 20","SMA 50","SMA 200","EMA 20","Bollinger"],
             default=["SMA 50","SMA 200","Bollinger"])
-        st.caption("Fullständig historik sedan börsnotering laddas alltid. Zooma i grafen.")
 
         st.divider()
         col_btn1, col_btn2 = st.columns(2)
@@ -1321,10 +1359,18 @@ def main():
                 'Fullständig systemåtkomst</div>',
                 unsafe_allow_html=True)
 
-    # ── DATA — alltid full historik sedan börsnotering ───────────────────────
+    # ── DATA ─────────────────────────────────────────────────────────────────
+    # df_daily = dagskurser sedan börsnotering (alltid, för TA/metrics/MC)
+    # df_chart = data för grafen med valt ljusintervall
     try:
         with st.spinner(f"Hämtar data för {selected}…"):
-            df       = fetch_history_max(ticker)   # all data from IPO
+            df_daily = fetch_history_max(ticker)
+            if chart_interval == "1d":
+                df_chart = df_daily
+            else:
+                df_chart = fetch_history_intraday(ticker, chart_interval)
+                if df_chart.empty:
+                    df_chart = df_daily   # fallback om intraday misslyckas
             info     = fetch_info(ticker)
             fin      = fetch_financials(ticker)
             beta_omx = calc_beta_omx(ticker)
@@ -1342,7 +1388,7 @@ def main():
             st.rerun()
         st.stop()
 
-    if df is None or df.empty:
+    if df_daily is None or df_daily.empty:
         st.warning(
             f"Ingen kursdata för **{ticker}**. "
             "Yahoo Finance kan vara tillfälligt otillgängligt — försök om en stund."
@@ -1352,9 +1398,11 @@ def main():
             st.rerun()
         st.stop()
 
-    # Senaste 252 handelsdagar för 52v-beräkningar och MC/TA
-    df_1y    = df.iloc[-252:] if len(df) >= 252 else df
-    _ipo_year = int(df.index[0].year) if not df.empty else "?"
+    # Alias för bakåtkompatibilitet i TA/metrics
+    df = df_daily
+    # Senaste 252 handelsdagar (dagskurser) för 52v-metrics, TA-signaler, MC
+    df_1y     = df_daily.iloc[-252:] if len(df_daily) >= 252 else df_daily
+    _ipo_year = int(df_daily.index[0].year) if not df_daily.empty else "?"
 
     # ── HEADER ───────────────────────────────────────────────────────────────
     # Realtidspris (5 min cache) — fallback till historik
@@ -1448,7 +1496,10 @@ def main():
     # TAB 1 — TEKNISK ANALYS
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[0]:
-        st.plotly_chart(chart_candle(df, ticker, inds), use_container_width=True)
+        st.plotly_chart(
+            chart_candle(df_chart, df_daily, ticker, inds, chart_interval),
+            use_container_width=True,
+        )
 
         # Signaltabell — TA-signaler på senaste 252 dagsdata
         st.subheader("Handelssignaler")
