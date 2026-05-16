@@ -1029,98 +1029,32 @@ _LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
 
 def chart_candle(
-    df_chart: pd.DataFrame,
-    df_daily: pd.DataFrame,
+    df: pd.DataFrame,
     ticker: str,
     indicators: list[str],
     interval: str = "1d",
 ) -> go.Figure:
     """
-    df_chart  — data i valt intervall (1d/1h/12h), används för ljus och volym
-    df_daily  — dagskurser (max-historik), används för RSI/MACD så att
-                dessa indikatorer alltid är korrekta oavsett ljusstorlek
-    interval  — "1d" | "1h" | "12h"
+    Alla traces på SAMMA df — noll resampling, noll x-axel-mismatch.
+    Plotly hanterar 10 000+ dagspunkter via WebGL.
+    Range-selector zoomar utan att ändra datamängd eller ljusstorlek.
     """
-    c      = df_chart["Close"]
-    c_day  = df_daily["Close"]
+    if df.empty:
+        return go.Figure()
 
-    _interval_label = {"1d": "Dagsljus", "1h": "Timljus", "12h": "12h-ljus"}.get(interval, interval)
+    c   = df["Close"]
+    idx = df.index
+    x_end   = idx[-1]
 
-    fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.02,
-        row_heights=[0.52, 0.13, 0.18, 0.17],
-        subplot_titles=(ticker, "Volym", "RSI 14 (dag)", "MACD (dag)"),
+    # Standard range-knapp-stil
+    _rs = dict(
+        bgcolor="#0C0C0C", bordercolor="#252525", borderwidth=1,
+        font=dict(color="#888888", size=10),
+        activecolor="#2ECC71",
     )
 
-    # ── Candlestick ──────────────────────────────────────────────────────────
-    fig.add_trace(go.Candlestick(
-        x=df_chart.index,
-        open=df_chart["Open"], high=df_chart["High"],
-        low=df_chart["Low"],   close=c,
-        name=_interval_label,
-        increasing_line_color="#2ECC71", decreasing_line_color="#E05252",
-        increasing_fillcolor="rgba(46,204,113,0.18)",
-        decreasing_fillcolor="rgba(224,82,82,0.18)",
-    ), 1, 1)
-
-    # ── Glidande medelvärden / Bollinger (beräknas på grafens tidserie) ──────
-    MA_COLORS = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5",
-                 "SMA 200":"#C87878","EMA 20":"#6BBFB5"}
-    for ind in indicators:
-        col = MA_COLORS.get(ind, "#888")
-        if ind == "SMA 20":
-            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 20),
-                name="SMA 20",  line=dict(color=col, width=1.1)), 1, 1)
-        elif ind == "SMA 50":
-            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 50),
-                name="SMA 50",  line=dict(color=col, width=1.4)), 1, 1)
-        elif ind == "SMA 200":
-            fig.add_trace(go.Scatter(x=df_chart.index, y=sma(c, 200),
-                name="SMA 200", line=dict(color=col, width=1.8)), 1, 1)
-        elif ind == "EMA 20":
-            fig.add_trace(go.Scatter(x=df_chart.index, y=ema(c, 20),
-                name="EMA 20",  line=dict(color=col, width=1.1, dash="dot")), 1, 1)
-    if "Bollinger" in indicators:
-        ub, _, lb = bollinger(c)
-        fig.add_trace(go.Scatter(x=df_chart.index, y=ub, name="BB+",
-            line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash")), 1, 1)
-        fig.add_trace(go.Scatter(x=df_chart.index, y=lb, name="BB−",
-            line=dict(color="rgba(140,140,190,0.50)", width=0.9, dash="dash"),
-            fill="tonexty", fillcolor="rgba(120,120,180,0.03)"), 1, 1)
-
-    # ── Volym ────────────────────────────────────────────────────────────────
-    v_col = ["#2ECC71" if cl >= op else "#E05252"
-             for cl, op in zip(df_chart["Close"], df_chart["Open"])]
-    fig.add_trace(go.Bar(x=df_chart.index, y=df_chart["Volume"],
-        name="Volym", marker_color=v_col, opacity=0.48), 2, 1)
-
-    # ── RSI på dagskurser (alltid korrekt) ───────────────────────────────────
-    rsi_s = rsi(c_day)
-    fig.add_trace(go.Scatter(x=df_daily.index, y=rsi_s, name="RSI",
-        line=dict(color="#C8A020", width=1.3)), 3, 1)
-    for lvl, col in [(70,"rgba(224,82,82,.28)"),(30,"rgba(46,204,113,.28)"),
-                     (50,"rgba(255,255,255,.07)")]:
-        fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
-
-    # ── MACD på dagskurser ───────────────────────────────────────────────────
-    ml, sl, mhist = macd(c_day)
-    hc = ["#2ECC71" if h >= 0 else "#E05252" for h in mhist]
-    fig.add_trace(go.Bar(x=df_daily.index, y=mhist,
-        name="Histogram", marker_color=hc, opacity=0.48), 4, 1)
-    fig.add_trace(go.Scatter(x=df_daily.index, y=ml,  name="MACD",
-        line=dict(color="#5B9BD5", width=1.3)), 4, 1)
-    fig.add_trace(go.Scatter(x=df_daily.index, y=sl,  name="Signal",
-        line=dict(color="#C87878", width=1.3)), 4, 1)
-
-    # ── Range-selector — anpassade knappar per intervall ─────────────────────
-    _rs_style = dict(
-        bgcolor="#0C0C0C", bordercolor="#2A2A2A", borderwidth=1,
-        font=dict(color="#909090", size=10),
-        activecolor="#2ECC71", x=0, y=1.025,
-    )
     if interval == "1d":
-        # Dagskurser: full historik tillgänglig
-        _rs_buttons = [
+        _buttons = [
             dict(count=1,  label="1M",  step="month", stepmode="backward"),
             dict(count=3,  label="3M",  step="month", stepmode="backward"),
             dict(count=6,  label="6M",  step="month", stepmode="backward"),
@@ -1129,10 +1063,9 @@ def chart_candle(
             dict(count=10, label="10Y", step="year",  stepmode="backward"),
             dict(step="all", label="MAX"),
         ]
-        _default_start = df_chart.index[-1] - pd.DateOffset(years=1)
+        x_start = x_end - pd.DateOffset(years=1)
     else:
-        # Intraday: max 730 dagar (1h) — kortare default-vy
-        _rs_buttons = [
+        _buttons = [
             dict(count=1,  label="1D",  step="day",   stepmode="backward"),
             dict(count=5,  label="1V",  step="day",   stepmode="backward"),
             dict(count=1,  label="1M",  step="month", stepmode="backward"),
@@ -1141,23 +1074,94 @@ def chart_candle(
             dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
             dict(step="all", label="MAX"),
         ]
-        _default_start = df_chart.index[-1] - pd.DateOffset(weeks=2)
+        x_start = x_end - pd.DateOffset(weeks=2)
 
+    fig = make_subplots(
+        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.015,
+        row_heights=[0.54, 0.13, 0.17, 0.16],
+        subplot_titles=("", "", "RSI 14", "MACD"),
+    )
+
+    # ── Candlestick ──────────────────────────────────────────────────────────
+    fig.add_trace(go.Candlestick(
+        x=idx,
+        open=df["Open"], high=df["High"],
+        low=df["Low"],   close=c,
+        name="Kurs",
+        increasing_line_color="#2ECC71",
+        decreasing_line_color="#E05252",
+        increasing_fillcolor="rgba(46,204,113,0.16)",
+        decreasing_fillcolor="rgba(224,82,82,0.16)",
+        whiskerwidth=0,
+    ), 1, 1)
+
+    # ── MAs / Bollinger — beräknas på df ─────────────────────────────────────
+    MA_C = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5",
+            "SMA 200":"#C87878","EMA 20":"#6BBFB5"}
+    for ind in indicators:
+        col = MA_C.get(ind, "#888")
+        if ind == "SMA 20":
+            fig.add_trace(go.Scatter(x=idx, y=sma(c, 20),   name="SMA 20",
+                line=dict(color=col, width=1.1)), 1, 1)
+        elif ind == "SMA 50":
+            fig.add_trace(go.Scatter(x=idx, y=sma(c, 50),   name="SMA 50",
+                line=dict(color=col, width=1.4)), 1, 1)
+        elif ind == "SMA 200":
+            fig.add_trace(go.Scatter(x=idx, y=sma(c, 200),  name="SMA 200",
+                line=dict(color=col, width=1.8)), 1, 1)
+        elif ind == "EMA 20":
+            fig.add_trace(go.Scatter(x=idx, y=ema(c, 20),   name="EMA 20",
+                line=dict(color=col, width=1.1, dash="dot")), 1, 1)
+    if "Bollinger" in indicators:
+        ub, _, lb = bollinger(c)
+        fig.add_trace(go.Scatter(x=idx, y=ub, name="BB+",
+            line=dict(color="rgba(130,130,180,0.45)", width=0.8, dash="dash")), 1, 1)
+        fig.add_trace(go.Scatter(x=idx, y=lb, name="BB−",
+            line=dict(color="rgba(130,130,180,0.45)", width=0.8, dash="dash"),
+            fill="tonexty", fillcolor="rgba(110,110,170,0.04)"), 1, 1)
+
+    # ── Volym ────────────────────────────────────────────────────────────────
+    v_col = ["#2ECC71" if float(cl) >= float(op) else "#E05252"
+             for cl, op in zip(df["Close"], df["Open"])]
+    fig.add_trace(go.Bar(x=idx, y=df["Volume"],
+        name="Volym", marker_color=v_col, opacity=0.45), 2, 1)
+
+    # ── RSI — beräknas på df (samma tidserie som ljusen) ─────────────────────
+    rsi_s = rsi(c)
+    fig.add_trace(go.Scatter(x=idx, y=rsi_s, name="RSI",
+        line=dict(color="#C8A020", width=1.3)), 3, 1)
+    for lvl, col in [(70,"rgba(224,82,82,.25)"),
+                     (30,"rgba(46,204,113,.25)"),
+                     (50,"rgba(255,255,255,.06)")]:
+        fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
+
+    # ── MACD — beräknas på df ────────────────────────────────────────────────
+    ml, sl, mhist = macd(c)
+    hc = ["#2ECC71" if h >= 0 else "#E05252" for h in mhist]
+    fig.add_trace(go.Bar(x=idx, y=mhist,
+        name="Histogram", marker_color=hc, opacity=0.45), 4, 1)
+    fig.add_trace(go.Scatter(x=idx, y=ml, name="MACD",
+        line=dict(color="#5B9BD5", width=1.3)), 4, 1)
+    fig.add_trace(go.Scatter(x=idx, y=sl, name="Signal",
+        line=dict(color="#C87878", width=1.3)), 4, 1)
+
+    # ── X-axel: range-selector + default-vy ──────────────────────────────────
     fig.update_xaxes(
-        rangeselector=dict(buttons=_rs_buttons, **_rs_style),
+        rangeselector=dict(buttons=_buttons, **_rs),
         rangeslider=dict(visible=False),
-        range=[_default_start, df_chart.index[-1]],
+        range=[str(x_start.date()), str(x_end.date())],
         row=1, col=1,
     )
+    # Göm helg-luckor (börsen stängd) för dagskurser
+    if interval == "1d":
+        fig.update_xaxes(rangebreaks=[
+            dict(bounds=["sat", "mon"]),  # ta bort lör-sön
+        ])
+
     fig.update_layout(
         height=860,
         xaxis_rangeslider_visible=False,
         legend=_LEGEND,
-        annotations=[dict(
-            text=_interval_label, x=1, y=1.025,
-            xref="paper", yref="paper", showarrow=False,
-            font=dict(size=9, color="#585858"), xanchor="right",
-        )],
         **_DARK,
     )
     return fig
@@ -1497,7 +1501,7 @@ def main():
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[0]:
         st.plotly_chart(
-            chart_candle(df_chart, df_daily, ticker, inds, chart_interval),
+            chart_candle(df_chart, ticker, inds, chart_interval),
             use_container_width=True,
         )
 
