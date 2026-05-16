@@ -372,23 +372,33 @@ def fetch_history_max(ticker: str) -> pd.DataFrame:
     return df
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
-def fetch_history_intraday(ticker: str, interval: str = "1h") -> pd.DataFrame:
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_history_intraday(ticker: str, interval: str) -> pd.DataFrame:
     """
-    Intraday OHLCV för grafvisning.
-    yfinance-gränser: 1h → max 730d, 30m → 60d, 15m → 60d.
-    12H returneras som 1H resamplad till 12H internt.
+    Intraday OHLCV för alla korta intervall.
+    yfinance max-perioder: 1m→7d, 2m/5m/15m/30m→60d, 1h→730d.
+    10m och 12h hämtas som 5m/1h och resamplas.
     """
-    _fetch_interval = "1h" if interval == "12h" else interval
-    _period_map = {"1h": "730d", "30m": "60d", "15m": "60d"}
-    _period = _period_map.get(_fetch_interval, "730d")
+    # Vad yfinance faktiskt hämtas med
+    _fetch = {"10m": "5m", "12h": "1h"}.get(interval, interval)
+    # Max tillgänglig period per fetch-intervall
+    _period = {
+        "1m":  "7d",
+        "2m":  "58d",
+        "5m":  "58d",
+        "15m": "58d",
+        "30m": "58d",
+        "1h":  "730d",
+    }.get(_fetch, "58d")
     try:
-        df = _retry(lambda: _ticker(ticker).history(
-            period=_period, interval=_fetch_interval))
+        df = _retry(lambda: _ticker(ticker).history(period=_period, interval=_fetch))
         if df is None or df.empty:
             return pd.DataFrame()
         df.index = pd.to_datetime(df.index).tz_localize(None)
-        if interval == "12h":
+        # Resampling för intervall som inte stöds direkt av yfinance
+        if interval == "10m":
+            df = resample_ohlcv(df, "10min")
+        elif interval == "12h":
             df = resample_ohlcv(df, "12h")
         return df
     except Exception:
@@ -1037,8 +1047,8 @@ def chart_candle(
     interval: str = "1d",
 ) -> go.Figure:
     """
-    Ren implementation — ett df, alla traces på exakt samma index.
-    Ingen resampling. Range-selector ändrar bara vyns fönster, inte datan.
+    Ett df, alla traces på exakt samma tidsindex.
+    Range-selector och rangebreaks konfigureras per intervall.
     """
     if df.empty:
         return go.Figure()
@@ -1047,34 +1057,119 @@ def chart_candle(
     idx = df.index
     x_end = idx[-1]
 
-    # ── Range-knappar och default-vy per intervall ────────────────────────────
     _btn_style = dict(
         bgcolor="#111111", bordercolor="#2A2A2A", borderwidth=1,
         font=dict(color="#888888", size=10),
         activecolor="#2ECC71",
     )
-    if interval == "1d":
-        _buttons = [
-            dict(count=1,  label="1M",  step="month", stepmode="backward"),
-            dict(count=3,  label="3M",  step="month", stepmode="backward"),
-            dict(count=6,  label="6M",  step="month", stepmode="backward"),
-            dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
-            dict(count=5,  label="5Y",  step="year",  stepmode="backward"),
-            dict(count=10, label="10Y", step="year",  stepmode="backward"),
-            dict(step="all", label="MAX"),
-        ]
-        x_start = x_end - pd.DateOffset(years=1)
-    else:
-        # Intraday — Yahoo Finance ger max ~730 dagar (2 år) för 1H
-        _buttons = [
-            dict(count=1,  label="1D", step="day",   stepmode="backward"),
-            dict(count=5,  label="1V", step="day",   stepmode="backward"),
-            dict(count=1,  label="1M", step="month", stepmode="backward"),
-            dict(count=3,  label="3M", step="month", stepmode="backward"),
-            dict(count=6,  label="6M", step="month", stepmode="backward"),
-            dict(step="all", label="MAX"),
-        ]
-        x_start = x_end - pd.DateOffset(weeks=2)
+
+    # ── Per-intervall: range-knappar, default-vy, rangebreaks ────────────────
+    _H = "hour"; _D = "day"; _M = "month"; _Y = "year"
+
+    _CFG = {
+        "1m":  dict(
+            default=pd.DateOffset(hours=8),
+            buttons=[
+                dict(count=1,  label="1H",  step=_H, stepmode="backward"),
+                dict(count=4,  label="4H",  step=_H, stepmode="backward"),
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=3,  label="3D",  step=_D, stepmode="backward"),
+                dict(step="all", label="MAX (7D)"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"]),
+                     dict(bounds=[18, 8], pattern="hour")],
+        ),
+        "5m":  dict(
+            default=pd.DateOffset(days=3),
+            buttons=[
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=3,  label="3D",  step=_D, stepmode="backward"),
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"]),
+                     dict(bounds=[18, 8], pattern="hour")],
+        ),
+        "10m": dict(
+            default=pd.DateOffset(weeks=1),
+            buttons=[
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=14, label="2V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"]),
+                     dict(bounds=[18, 8], pattern="hour")],
+        ),
+        "15m": dict(
+            default=pd.DateOffset(weeks=1),
+            buttons=[
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=14, label="2V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"]),
+                     dict(bounds=[18, 8], pattern="hour")],
+        ),
+        "30m": dict(
+            default=pd.DateOffset(months=1),
+            buttons=[
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(count=2,  label="2M",  step=_M, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"]),
+                     dict(bounds=[18, 8], pattern="hour")],
+        ),
+        "1h":  dict(
+            default=pd.DateOffset(weeks=2),
+            buttons=[
+                dict(count=1,  label="1D",  step=_D, stepmode="backward"),
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(count=3,  label="3M",  step=_M, stepmode="backward"),
+                dict(count=6,  label="6M",  step=_M, stepmode="backward"),
+                dict(count=1,  label="1Y",  step=_Y, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"])],
+        ),
+        "12h": dict(
+            default=pd.DateOffset(months=2),
+            buttons=[
+                dict(count=7,  label="1V",  step=_D, stepmode="backward"),
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(count=3,  label="3M",  step=_M, stepmode="backward"),
+                dict(count=6,  label="6M",  step=_M, stepmode="backward"),
+                dict(count=1,  label="1Y",  step=_Y, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"])],
+        ),
+        "1d":  dict(
+            default=pd.DateOffset(years=1),
+            buttons=[
+                dict(count=1,  label="1M",  step=_M, stepmode="backward"),
+                dict(count=3,  label="3M",  step=_M, stepmode="backward"),
+                dict(count=6,  label="6M",  step=_M, stepmode="backward"),
+                dict(count=1,  label="1Y",  step=_Y, stepmode="backward"),
+                dict(count=5,  label="5Y",  step=_Y, stepmode="backward"),
+                dict(count=10, label="10Y", step=_Y, stepmode="backward"),
+                dict(step="all", label="MAX"),
+            ],
+            rbreaks=[dict(bounds=["sat","mon"])],
+        ),
+    }
+    cfg      = _CFG.get(interval, _CFG["1d"])
+    _buttons = cfg["buttons"]
+    x_start  = x_end - cfg["default"]
+    _rbreaks = cfg["rbreaks"]
 
     # ── Subplots — delad x-axel ───────────────────────────────────────────────
     fig = make_subplots(
@@ -1142,11 +1237,10 @@ def chart_candle(
     fig.update_layout(height=860, legend=_LEGEND, **_DARK)
     fig.update_yaxes(**_AXIS)
 
-    # Gitter + helgluckor bort (gäller alla delade x-axlar)
-    _rbreaks = [dict(bounds=["sat", "mon"])] if interval == "1d" else []
+    # Gitter + rangebreaks på alla delade x-axlar (helger + handelstider)
     fig.update_xaxes(**_AXIS, rangebreaks=_rbreaks)
 
-    # Range-selector + default-vy — enbart på pris-panelen (row=1)
+    # Range-selector + default-vy — enbart synlig på pris-panelen (row=1)
     fig.update_xaxes(
         rangeselector=dict(buttons=_buttons, **_btn_style),
         rangeslider=dict(visible=False),
@@ -1311,15 +1405,22 @@ def main():
                                 index=list(OMX30.keys()).index("Volvo B"))
         ticker   = OMX30[selected]
 
-        chart_interval = st.radio(
+        _IV_OPTS = ["1m","5m","10m","15m","30m","1h","12h","1d"]
+        _IV_LABELS = {
+            "1m":  "1 min   (7 dagar)",
+            "5m":  "5 min   (58 dagar)",
+            "10m": "10 min  (58 dagar)",
+            "15m": "15 min  (58 dagar)",
+            "30m": "30 min  (58 dagar)",
+            "1h":  "1 timme (~2 år)",
+            "12h": "12 tim  (~2 år)",
+            "1d":  "1 dag   (full historik)",
+        }
+        chart_interval = st.selectbox(
             "Ljusstorlek",
-            options=["1d", "1h", "12h"],
-            format_func=lambda x: {
-                "1d":  "1 dag  (full historik)",
-                "1h":  "1 timme  (~2 år)",
-                "12h": "12 timmar  (~2 år)",
-            }[x],
-            index=0,
+            options=_IV_OPTS,
+            format_func=lambda x: _IV_LABELS[x],
+            index=_IV_OPTS.index("1d"),
         )
 
         inds = st.multiselect("Indikatorer",
@@ -1367,7 +1468,8 @@ def main():
             else:
                 df_chart = fetch_history_intraday(ticker, chart_interval)
                 if df_chart.empty:
-                    df_chart = df_daily   # fallback om intraday misslyckas
+                    st.warning("Intraday-data otillgänglig, visar dagskurser.")
+                    df_chart = df_daily
             info     = fetch_info(ticker)
             fin      = fetch_financials(ticker)
             beta_omx = calc_beta_omx(ticker)
@@ -1494,10 +1596,15 @@ def main():
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[0]:
         if chart_interval != "1d":
+            _iv_note = {
+                "1m":  "7 dagar", "5m": "58 dagar", "10m": "58 dagar",
+                "15m": "58 dagar","30m":"58 dagar",
+                "1h":  "~2 år",   "12h": "~2 år",
+            }.get(chart_interval, "")
             st.caption(
-                f"Timdata: Yahoo Finance tillhandahaller max ~730 dagar historik for "
-                f"{'1-timmes' if chart_interval == '1h' else '12-timmars'}ljus. "
-                f"Valt dagsvyn (1 dag) for full historik sedan {_ipo_year}."
+                f"Max tillganglig historik for {_IV_LABELS[chart_interval].split('(')[0].strip()}"
+                f"-ljus: {_iv_note} (Yahoo Finance-grans). "
+                f"Dagsvyn (1 dag) visar full historik sedan {_ipo_year}."
             )
         st.plotly_chart(
             chart_candle(df_chart, ticker, inds, chart_interval),
