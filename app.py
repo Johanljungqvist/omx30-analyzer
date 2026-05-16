@@ -1187,9 +1187,8 @@ def chart_candle(
         low=df["Low"],   close=c,
         name="Kurs",
         increasing_line_color="#2ECC71",  decreasing_line_color="#E05252",
-        increasing_fillcolor="rgba(46,204,113,0.15)",
-        decreasing_fillcolor="rgba(224,82,82,0.15)",
-        whiskerwidth=0,
+        increasing_fillcolor="#2ECC71",
+        decreasing_fillcolor="#E05252",
     ), row=1, col=1)
 
     # ── Glidande medelvärden / Bollinger ─────────────────────────────────────
