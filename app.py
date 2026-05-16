@@ -1140,12 +1140,13 @@ def chart_candle(
 
     # ── Layout ────────────────────────────────────────────────────────────────
     fig.update_layout(height=860, legend=_LEGEND, **_DARK)
-
-    # Gitter på alla axlar
-    fig.update_xaxes(**_AXIS)
     fig.update_yaxes(**_AXIS)
 
-    # Range-selector + default-vy på pris-panelen (xaxis = subplot 1)
+    # Gitter + helgluckor bort (gäller alla delade x-axlar)
+    _rbreaks = [dict(bounds=["sat", "mon"])] if interval == "1d" else []
+    fig.update_xaxes(**_AXIS, rangebreaks=_rbreaks)
+
+    # Range-selector + default-vy — enbart på pris-panelen (row=1)
     fig.update_xaxes(
         rangeselector=dict(buttons=_buttons, **_btn_style),
         rangeslider=dict(visible=False),
