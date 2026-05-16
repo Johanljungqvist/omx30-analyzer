@@ -1035,24 +1035,22 @@ def chart_candle(
     interval: str = "1d",
 ) -> go.Figure:
     """
-    Alla traces på SAMMA df — noll resampling, noll x-axel-mismatch.
-    Plotly hanterar 10 000+ dagspunkter via WebGL.
-    Range-selector zoomar utan att ändra datamängd eller ljusstorlek.
+    Ren implementation — ett df, alla traces på exakt samma index.
+    Ingen resampling. Range-selector ändrar bara vyns fönster, inte datan.
     """
     if df.empty:
         return go.Figure()
 
     c   = df["Close"]
     idx = df.index
-    x_end   = idx[-1]
+    x_end = idx[-1]
 
-    # Standard range-knapp-stil
-    _rs = dict(
-        bgcolor="#0C0C0C", bordercolor="#252525", borderwidth=1,
+    # ── Range-knappar och default-vy per intervall ────────────────────────────
+    _btn_style = dict(
+        bgcolor="#111111", bordercolor="#2A2A2A", borderwidth=1,
         font=dict(color="#888888", size=10),
         activecolor="#2ECC71",
     )
-
     if interval == "1d":
         _buttons = [
             dict(count=1,  label="1M",  step="month", stepmode="backward"),
@@ -1065,53 +1063,47 @@ def chart_candle(
         ]
         x_start = x_end - pd.DateOffset(years=1)
     else:
+        # Intraday — Yahoo Finance ger max ~730 dagar (2 år) för 1H
         _buttons = [
-            dict(count=1,  label="1D",  step="day",   stepmode="backward"),
-            dict(count=5,  label="1V",  step="day",   stepmode="backward"),
-            dict(count=1,  label="1M",  step="month", stepmode="backward"),
-            dict(count=3,  label="3M",  step="month", stepmode="backward"),
-            dict(count=6,  label="6M",  step="month", stepmode="backward"),
-            dict(count=1,  label="1Y",  step="year",  stepmode="backward"),
+            dict(count=1,  label="1D", step="day",   stepmode="backward"),
+            dict(count=5,  label="1V", step="day",   stepmode="backward"),
+            dict(count=1,  label="1M", step="month", stepmode="backward"),
+            dict(count=3,  label="3M", step="month", stepmode="backward"),
+            dict(count=6,  label="6M", step="month", stepmode="backward"),
             dict(step="all", label="MAX"),
         ]
         x_start = x_end - pd.DateOffset(weeks=2)
 
+    # ── Subplots — delad x-axel ───────────────────────────────────────────────
     fig = make_subplots(
-        rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.015,
-        row_heights=[0.54, 0.13, 0.17, 0.16],
+        rows=4, cols=1,
+        shared_xaxes=True,
+        vertical_spacing=0.015,
+        row_heights=[0.54, 0.12, 0.17, 0.17],
         subplot_titles=("", "", "RSI 14", "MACD"),
     )
 
-    # ── Candlestick ──────────────────────────────────────────────────────────
+    # ── Candlestick ───────────────────────────────────────────────────────────
     fig.add_trace(go.Candlestick(
         x=idx,
         open=df["Open"], high=df["High"],
         low=df["Low"],   close=c,
         name="Kurs",
-        increasing_line_color="#2ECC71",
-        decreasing_line_color="#E05252",
-        increasing_fillcolor="rgba(46,204,113,0.16)",
-        decreasing_fillcolor="rgba(224,82,82,0.16)",
+        increasing_line_color="#2ECC71",  decreasing_line_color="#E05252",
+        increasing_fillcolor="rgba(46,204,113,0.15)",
+        decreasing_fillcolor="rgba(224,82,82,0.15)",
         whiskerwidth=0,
-    ), 1, 1)
+    ), row=1, col=1)
 
-    # ── MAs / Bollinger — beräknas på df ─────────────────────────────────────
+    # ── Glidande medelvärden / Bollinger ─────────────────────────────────────
     MA_C = {"SMA 20":"#C8A020","SMA 50":"#5B9BD5",
             "SMA 200":"#C87878","EMA 20":"#6BBFB5"}
     for ind in indicators:
         col = MA_C.get(ind, "#888")
-        if ind == "SMA 20":
-            fig.add_trace(go.Scatter(x=idx, y=sma(c, 20),   name="SMA 20",
-                line=dict(color=col, width=1.1)), 1, 1)
-        elif ind == "SMA 50":
-            fig.add_trace(go.Scatter(x=idx, y=sma(c, 50),   name="SMA 50",
-                line=dict(color=col, width=1.4)), 1, 1)
-        elif ind == "SMA 200":
-            fig.add_trace(go.Scatter(x=idx, y=sma(c, 200),  name="SMA 200",
-                line=dict(color=col, width=1.8)), 1, 1)
-        elif ind == "EMA 20":
-            fig.add_trace(go.Scatter(x=idx, y=ema(c, 20),   name="EMA 20",
-                line=dict(color=col, width=1.1, dash="dot")), 1, 1)
+        if   ind == "SMA 20":  fig.add_trace(go.Scatter(x=idx, y=sma(c,20),  name="SMA 20",  line=dict(color=col, width=1.1)), 1, 1)
+        elif ind == "SMA 50":  fig.add_trace(go.Scatter(x=idx, y=sma(c,50),  name="SMA 50",  line=dict(color=col, width=1.4)), 1, 1)
+        elif ind == "SMA 200": fig.add_trace(go.Scatter(x=idx, y=sma(c,200), name="SMA 200", line=dict(color=col, width=1.8)), 1, 1)
+        elif ind == "EMA 20":  fig.add_trace(go.Scatter(x=idx, y=ema(c,20),  name="EMA 20",  line=dict(color=col, width=1.1, dash="dot")), 1, 1)
     if "Bollinger" in indicators:
         ub, _, lb = bollinger(c)
         fig.add_trace(go.Scatter(x=idx, y=ub, name="BB+",
@@ -1120,48 +1112,44 @@ def chart_candle(
             line=dict(color="rgba(130,130,180,0.45)", width=0.8, dash="dash"),
             fill="tonexty", fillcolor="rgba(110,110,170,0.04)"), 1, 1)
 
-    # ── Volym ────────────────────────────────────────────────────────────────
+    # ── Volym ─────────────────────────────────────────────────────────────────
     v_col = ["#2ECC71" if float(cl) >= float(op) else "#E05252"
              for cl, op in zip(df["Close"], df["Open"])]
     fig.add_trace(go.Bar(x=idx, y=df["Volume"],
-        name="Volym", marker_color=v_col, opacity=0.45), 2, 1)
+        name="Volym", marker_color=v_col, opacity=0.45), row=2, col=1)
 
-    # ── RSI — beräknas på df (samma tidserie som ljusen) ─────────────────────
-    rsi_s = rsi(c)
-    fig.add_trace(go.Scatter(x=idx, y=rsi_s, name="RSI",
-        line=dict(color="#C8A020", width=1.3)), 3, 1)
-    for lvl, col in [(70,"rgba(224,82,82,.25)"),
-                     (30,"rgba(46,204,113,.25)"),
-                     (50,"rgba(255,255,255,.06)")]:
+    # ── RSI ───────────────────────────────────────────────────────────────────
+    rsi_vals = rsi(c)
+    fig.add_trace(go.Scatter(x=idx, y=rsi_vals, name="RSI",
+        line=dict(color="#C8A020", width=1.3)), row=3, col=1)
+    for lvl, col in [(70,"rgba(224,82,82,.25)"),(30,"rgba(46,204,113,.25)"),
+                     (50,"rgba(255,255,255,.07)")]:
         fig.add_hline(y=lvl, line_dash="dot", line_color=col, row=3, col=1)
 
-    # ── MACD — beräknas på df ────────────────────────────────────────────────
+    # ── MACD ──────────────────────────────────────────────────────────────────
     ml, sl, mhist = macd(c)
     hc = ["#2ECC71" if h >= 0 else "#E05252" for h in mhist]
-    fig.add_trace(go.Bar(x=idx, y=mhist,
-        name="Histogram", marker_color=hc, opacity=0.45), 4, 1)
+    fig.add_trace(go.Bar(x=idx, y=mhist, name="Histogram",
+        marker_color=hc, opacity=0.45), row=4, col=1)
     fig.add_trace(go.Scatter(x=idx, y=ml, name="MACD",
-        line=dict(color="#5B9BD5", width=1.3)), 4, 1)
+        line=dict(color="#5B9BD5", width=1.3)), row=4, col=1)
     fig.add_trace(go.Scatter(x=idx, y=sl, name="Signal",
-        line=dict(color="#C87878", width=1.3)), 4, 1)
+        line=dict(color="#C87878", width=1.3)), row=4, col=1)
 
-    # ── X-axel: range-selector + default-vy ──────────────────────────────────
-    fig.update_xaxes(
-        rangeselector=dict(buttons=_buttons, **_rs),
-        rangeslider=dict(visible=False),
-        range=[str(x_start.date()), str(x_end.date())],
-        row=1, col=1,
-    )
-    # Göm helg-luckor (börsen stängd) för dagskurser
-    if interval == "1d":
-        fig.update_xaxes(rangebreaks=[
-            dict(bounds=["sat", "mon"]),  # ta bort lör-sön
-        ])
-
+    # ── Layout — xaxis konfigureras via layout (säkrare med shared_xaxes) ────
     fig.update_layout(
         height=860,
-        xaxis_rangeslider_visible=False,
         legend=_LEGEND,
+        xaxis=dict(
+            rangeselector=dict(buttons=_buttons, **_btn_style),
+            rangeslider=dict(visible=False),
+            range=[x_start, x_end],
+            type="date",
+            showticklabels=False,   # dölj tickar på pris-panelen, visas på MACD
+        ),
+        xaxis4=dict(                # MACD-panelens x-axel — visa datum
+            rangeslider=dict(visible=False),
+        ),
         **_DARK,
     )
     return fig
@@ -1324,8 +1312,11 @@ def main():
         chart_interval = st.radio(
             "Ljusstorlek",
             options=["1d", "1h", "12h"],
-            format_func=lambda x: {"1d": "1 dag", "1h": "1 timme", "12h": "12 timmar"}[x],
-            horizontal=True,
+            format_func=lambda x: {
+                "1d":  "1 dag  (full historik)",
+                "1h":  "1 timme  (~2 år)",
+                "12h": "12 timmar  (~2 år)",
+            }[x],
             index=0,
         )
 
@@ -1500,6 +1491,12 @@ def main():
     # TAB 1 — TEKNISK ANALYS
     # ═════════════════════════════════════════════════════════════════════════
     with tabs[0]:
+        if chart_interval != "1d":
+            st.caption(
+                f"Timdata: Yahoo Finance tillhandahaller max ~730 dagar historik for "
+                f"{'1-timmes' if chart_interval == '1h' else '12-timmars'}ljus. "
+                f"Valt dagsvyn (1 dag) for full historik sedan {_ipo_year}."
+            )
         st.plotly_chart(
             chart_candle(df_chart, ticker, inds, chart_interval),
             use_container_width=True,
