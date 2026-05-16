@@ -1018,12 +1018,14 @@ def monte_carlo(
 # CHART BUILDERS
 # ─────────────────────────────────────────────────────────────────────────────
 _DARK = dict(template="plotly_dark",
-             paper_bgcolor="#09090F",
-             plot_bgcolor="#0D0D15",
-             font=dict(family="Inter, system-ui, sans-serif", color="#C8C8D8", size=12),
-             title_font=dict(family="Inter, system-ui, sans-serif", color="#FFFFFF", size=14),
-             xaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"),
-             yaxis=dict(gridcolor="#1C1C28", zerolinecolor="#2A2A38"))
+             paper_bgcolor="#0C0C0C",
+             plot_bgcolor="#111111",
+             font=dict(family="Inter, system-ui, sans-serif", color="#C8C8C8", size=12),
+             title_font=dict(family="Inter, system-ui, sans-serif", color="#E0E0E0", size=14))
+
+# Gitter-stil appliceras via update_xaxes/update_yaxes, ej i _DARK
+# (undviker dubbel-nyckel-konflikt när xaxis= skickas explicit till update_layout)
+_AXIS = dict(gridcolor="#1E1E1E", zerolinecolor="#2A2A2A")
 
 _LEGEND = dict(bgcolor="rgba(0,0,0,0)", bordercolor="rgba(255,255,255,0.08)")
 
@@ -1136,21 +1138,20 @@ def chart_candle(
     fig.add_trace(go.Scatter(x=idx, y=sl, name="Signal",
         line=dict(color="#C87878", width=1.3)), row=4, col=1)
 
-    # ── Layout — xaxis konfigureras via layout (säkrare med shared_xaxes) ────
-    fig.update_layout(
-        height=860,
-        legend=_LEGEND,
-        xaxis=dict(
-            rangeselector=dict(buttons=_buttons, **_btn_style),
-            rangeslider=dict(visible=False),
-            range=[x_start, x_end],
-            type="date",
-            showticklabels=False,   # dölj tickar på pris-panelen, visas på MACD
-        ),
-        xaxis4=dict(                # MACD-panelens x-axel — visa datum
-            rangeslider=dict(visible=False),
-        ),
-        **_DARK,
+    # ── Layout ────────────────────────────────────────────────────────────────
+    fig.update_layout(height=860, legend=_LEGEND, **_DARK)
+
+    # Gitter på alla axlar
+    fig.update_xaxes(**_AXIS)
+    fig.update_yaxes(**_AXIS)
+
+    # Range-selector + default-vy på pris-panelen (xaxis = subplot 1)
+    fig.update_xaxes(
+        rangeselector=dict(buttons=_buttons, **_btn_style),
+        rangeslider=dict(visible=False),
+        range=[x_start, x_end],
+        type="date",
+        row=1, col=1,
     )
     return fig
 
